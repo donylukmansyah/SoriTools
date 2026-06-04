@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>SoriTools</title>
+    <link rel="stylesheet" href="../node_modules/sweetalert2/dist/sweetalert2.min.css">
+    <link rel="stylesheet" href="css/styles.css?v=34">
+  </head>
+  <body ondragover="return false" ondrop="return false">
+    <main class="app-shell">
+      <header class="titlebar">
+        <div class="brand">
+          <a id="brandLink" class="brand-link" href="https://www.soriscp.com/" title="Open SoriSCP">
+            <img src="../public/logo/sori_navbar.png" alt="SoriTools logo" class="brand-logo" draggable="false" onerror="this.style.display='none'">
+          </a>
+          <span class="brand-label">SoriTools</span>
+        </div>
+        <div id="statusDot" class="status-dot" title="Connection Status"></div>
+      </header>
+      <div class="panel-container">
+        <!-- Section 1: Anchor & Layer Maker Grid -->
+        <div class="unified-grid row-anchor-maker">
+          <div class="anchor-grid" title="Anchor Point: Click to align layer anchor point">
+            <button class="grid-btn" data-anchor="tl" title="Top Left" aria-label="Set anchor point to top left">↖</button>
+            <button class="grid-btn" data-anchor="tc" title="Top Center" aria-label="Set anchor point to top center">↑</button>
+            <button class="grid-btn" data-anchor="tr" title="Top Right" aria-label="Set anchor point to top right">↗</button>
+            <button class="grid-btn" data-anchor="cl" title="Center Left" aria-label="Set anchor point to center left">←</button>
+            <button class="grid-btn center-btn" data-anchor="cc" title="Center Point" aria-label="Set anchor point to center">•</button>
+            <button class="grid-btn" data-anchor="cr" title="Center Right" aria-label="Set anchor point to center right">→</button>
+            <button class="grid-btn" data-anchor="bl" title="Bottom Left" aria-label="Set anchor point to bottom left">↙</button>
+            <button class="grid-btn" data-anchor="bc" title="Bottom Center" aria-label="Set anchor point to bottom center">↓</button>
+            <button class="grid-btn" data-anchor="br" title="Bottom Right" aria-label="Set anchor point to bottom right">↘</button>
+          </div>
+
+          <div class="maker-stack">
+            <button id="nullAdjBtn" class="action-btn" title="NULL / ADJ (Click: Null Layer · Shift+Click: Adjustment Layer)" aria-label="Create null layer or shift click adjustment layer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+              <span>NULL / ADJ</span>
+            </button>
+            <button id="solidCameraBtn" class="action-btn" title="SLD / CMR (Click: Solid Layer · Shift+Click: Camera Layer)" aria-label="Create solid layer or shift click camera layer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+              <span>SLD / CMR</span>
+            </button>
+            <label class="check-row" title="Auto-parent selected layers to newly created layers">
+              <input id="parentToLayer" type="checkbox" aria-label="Parent selected layers to newly created layer">
+              <span>Parent to Layer</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 2: Precomp Actions -->
+        <div class="unified-row row-precomp">
+          <button id="precompBtn" class="action-btn" title="Precomp (Click: Precomp each selected layer · Shift+Click: Precomp all into one)" aria-label="Precomp selected layers">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M2 15h10"/><path d="m9 18 3-3-3-3"/></svg>
+            <span>Precomp</span>
+          </button>
+          <button id="unprecompBtn" class="action-btn" title="Unprecomp: Extract selected precomposition layers safely" aria-label="Unprecomp selected precomposition layers">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M2 13h10"/><path d="m5 10-3 3 3 3"/></svg>
+            <span>Unprecomp</span>
+          </button>
+          <div class="icon-action-row">
+            <button id="effectsToggleBtn" class="action-btn icon-action-btn" title="Toggle Effect Controls (Click: current comp · Shift+Click or Shift+Right-click: include nested precomps)" aria-label="Toggle Effect Controls">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h6"/><path d="M15 6h6"/><path d="M9 6a3 3 0 1 0 6 0 3 3 0 0 0-6 0Z"/><path d="M3 18h12"/><path d="M21 18h-6"/><path d="M9 18a3 3 0 1 0 6 0 3 3 0 0 0-6 0Z"/></svg>
+            </button>
+            <button id="proxyBtn" class="action-btn icon-action-btn" title="Auto Proxy (Click: create/set proxies · Shift+Click/Shift+Right-click: toggle selected or all proxies · Right-click: proxy options)" aria-label="Auto Proxy">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M16 17l2-2 2 2"/><path d="M18 15v5"/></svg>
+            </button>
+            <button id="boostBtn" class="action-btn icon-action-btn" title="Boost Mode Off (Click: boost · Right-click: profiles · Shift+Click/Shift+Right-click: boost + selected work area)" aria-label="Boost Mode" aria-pressed="false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Section 3: Timeline & Navigation Row -->
+        <div class="unified-grid row-timeline">
+          <div class="timeline-settings">
+            <label title="Amount of frames to nudge">
+              <span>offset</span>
+              <input id="amountInput" type="number" value="1" min="0" step="1" aria-label="Timeline offset frames">
+            </label>
+            <label title="Multiplier step for nudge amount">
+              <span>step</span>
+              <input id="stepInput" type="number" value="1" min="0" step="1" aria-label="Timeline step multiplier">
+            </label>
+          </div>
+
+          <div class="timeline-nav">
+            <button class="action-btn" data-align="in" title="Timeline Move In (Click: Go to In Point · Shift+Click: Nudge playhead back · Shift+Ctrl+Click: Move layer backward)" aria-label="Timeline move to in point">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+            </button>
+            <button class="action-btn center-btn" data-align="center" title="Go to center of selected layers" aria-label="Go to center of selected layers">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>
+            </button>
+            <button class="action-btn" data-align="out" title="Timeline Move Out (Click: Go to Out Point · Shift+Click: Nudge playhead forward · Shift+Ctrl+Click: Move layer forward)" aria-label="Timeline move to out point">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Section 4: Presets -->
+        <div class="presets-container">
+          <div class="presets-header">
+            <div id="presetSearchWrap" class="preset-search">
+              <svg class="preset-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input id="presetSearch" type="text" role="searchbox" placeholder="Search presets" autocomplete="off" spellcheck="false" aria-label="Search presets">
+              <span id="presetSearchSpinner" class="preset-search-spinner"></span>
+              <button id="clearPresetSearchBtn" class="preset-search-clear" type="button" title="Clear Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+            </div>
+            <div class="presets-actions">
+              <button id="addPresetBtn" class="icon-btn" title="Import Preset File / Folder (.ffx)" aria-label="Import preset file or folder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+              <button id="newFolderBtn" class="icon-btn" title="Create New Folder" aria-label="Create new preset folder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
+              <button id="bulkDeleteModeBtn" class="icon-btn" title="Toggle Selection Mode" aria-label="Toggle preset selection mode"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><rect x="3" y="4" width="10" height="10" rx="2"/><path d="M3 18h18"/><path d="M3 14h6"/></svg></button>
+              <button id="exportPresetsBtn" class="icon-btn" title="Export All Presets" aria-label="Export all presets"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></button>
+            </div>
+          </div>
+          <div class="preset-panel" id="presetDropZone">
+            <div id="presetList" class="preset-list"></div>
+            <div class="preset-empty" id="presetEmpty">Drop .ffx files here or click + to import</div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <input id="presetFile" class="visually-hidden" type="file" accept=".ffx" multiple>
+    <script src="../node_modules/sweetalert2/dist/sweetalert2.all.min.js"></script>
+    <script src="js/csinterface.js?v=4"></script>
+    <script src="js/app.js?v=46"></script>
+  </body>
+</html>
