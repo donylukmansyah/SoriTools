@@ -36,7 +36,6 @@
     progressDismissed: false
   };
   var boostRun = { active: false, loading: false, profile: "strong" };
-  var boostWatcher = { timer: 0, signature: "", running: false };
 
   var runtime = { hostVersion: 0, legacyCep: false, jsxPath: "", jsxLoaded: false };
 
@@ -171,6 +170,7 @@
     els.unprecompBtn = document.getElementById("unprecompBtn");
     els.effectsToggleBtn = document.getElementById("effectsToggleBtn");
     els.proxyBtn = document.getElementById("proxyBtn");
+    els.savePresetBtn = document.getElementById("savePresetBtn");
     els.boostBtn = document.getElementById("boostBtn");
     els.addPresetBtn = document.getElementById("addPresetBtn");
     els.newFolderBtn = document.getElementById("newFolderBtn");
@@ -335,6 +335,15 @@
           return;
         }
         openProxyOptions();
+      });
+    }
+    if (els.savePresetBtn) {
+      els.savePresetBtn.addEventListener("click", function (e) {
+        saveSelectedAnimationPreset(e.shiftKey || e.ctrlKey || e.metaKey);
+      });
+      els.savePresetBtn.addEventListener("contextmenu", function (e) {
+        e.preventDefault();
+        saveSelectedAnimationPreset(true);
       });
     }
     if (els.boostBtn) {
@@ -1395,6 +1404,16 @@
     function commit() {
       var newName = input.value.trim();
       if (newName && newName !== node.name) {
+        if (node.type === "preset" && node.path) {
+          callAeQuiet("SORI_TOOLS.renamePresetFile(" + q(JSON.stringify({ path: node.path, name: newName })) + ")", function (response) {
+            if (response && response.ok && response.data && response.data.path) node.path = response.data.path;
+            else if (response && response.ok === false && response.message) toast("warning", response.message);
+            node.name = newName;
+            saveState();
+            renderPresetTree();
+          });
+          return;
+        }
         node.name = newName;
         saveState();
       }
@@ -1572,12 +1591,18 @@
     e.preventDefault();
     e.stopPropagation();
 
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      saveSelectedAnimationPreset();
+      return;
+    }
+
     closeContextMenu();
 
     var menu = document.createElement("div");
     menu.className = "preset-menu";
 
     var html = "";
+    html += '<button type="button" data-action="save-selected"><span>Save Selected Preset</span></button>';
     html += '<button type="button" data-action="import-files"><span>Import File(s)</span></button>';
     html += '<button type="button" data-action="import-folder"><span>Import Folder</span></button>';
     menu.innerHTML = html;
@@ -1588,7 +1613,9 @@
       var action = actionBtn.getAttribute("data-action");
       closeContextMenu();
 
-      if (action === "import-files") {
+      if (action === "save-selected") {
+        saveSelectedAnimationPreset();
+      } else if (action === "import-files") {
         choosePresetFiles();
       } else if (action === "import-folder") {
         importFolder();
@@ -1647,6 +1674,7 @@
       html += '<button type="button" data-action="apply-normal"><span>Apply Normal</span></button>';
       html += '<button type="button" data-action="smart-fit"><span>Smart Fit Layer</span></button>';
       html += '<button type="button" data-action="smart-playhead"><span>Smart From Playhead</span></button>';
+      html += '<button type="button" data-action="reveal"><span>Reveal File</span></button>';
     }
     html += '<button type="button" data-action="rename"><span>Rename</span></button>';
     html += '<button type="button" data-action="delete" class="danger"><span>Delete</span></button>';
@@ -1664,6 +1692,8 @@
         applyPresetSmart(node.path, "fitLayer");
       } else if (action === "smart-playhead" && node.type === "preset" && node.path) {
         applyPresetSmart(node.path, "fromPlayhead");
+      } else if (action === "reveal" && node.type === "preset" && node.path) {
+        callAe("SORI_TOOLS.revealPresetFile(" + q(node.path) + ")");
       } else if (action === "rename") {
         renameNodeStart(id);
       } else if (action === "delete") {
@@ -1887,6 +1917,37 @@
     }, 0);
   }
 
+  function deletePresetFiles(paths, done) {
+    var index = 0;
+    var failed = [];
+    function next() {
+      if (index >= paths.length) {
+        if (done) done(failed);
+        return;
+      }
+      var path = paths[index];
+      index += 1;
+      callAeQuiet("SORI_TOOLS.deletePresetFile(" + q(path) + ")", function (response) {
+        if (!response || !response.ok) failed.push(path);
+        next();
+      });
+    }
+    next();
+  }
+
+  function presetPathsFromNode(node) {
+    var paths = [];
+    if (!node) return paths;
+    if (node.type === "preset" && node.path) paths.push(node.path);
+    if (node.type === "folder") {
+      var allPresets = flattenPresets([node]);
+      for (var i = 0; i < allPresets.length; i += 1) {
+        if (allPresets[i].path) paths.push(allPresets[i].path);
+      }
+    }
+    return paths;
+  }
+
   function deleteCheckedItems() {
     var checkedIdsList = [];
     for (var k in state.checkedIds) {
@@ -1904,33 +1965,28 @@
     }).then(function (result) {
       if (!result.isConfirmed) return;
 
-      // Delete physical files for all selected presets
+      var paths = [];
       for (var i = 0; i < checkedIdsList.length; i += 1) {
         var node = findNode(checkedIdsList[i]);
-        if (node) {
-          if (node.type === "preset" && node.path) {
-            callAe("SORI_TOOLS.deletePresetFile(" + q(node.path) + ")");
-          } else if (node.type === "folder") {
-            var allPresets = flattenPresets([node]);
-            for (var j = 0; j < allPresets.length; j += 1) {
-              if (allPresets[j].path) {
-                callAe("SORI_TOOLS.deletePresetFile(" + q(allPresets[j].path) + ")");
-              }
-            }
-          }
+        var nodePaths = presetPathsFromNode(node);
+        for (var p = 0; p < nodePaths.length; p += 1) paths.push(nodePaths[p]);
+      }
+
+      deletePresetFiles(paths, function (failed) {
+        if (failed.length) {
+          toast("error", "Could not delete " + failed.length + " preset file(s). List unchanged.");
+          return;
         }
-      }
-
-      // Remove nodes from state.presetTree
-      for (var i = 0; i < checkedIdsList.length; i += 1) {
-        removeNode(state.presetTree, checkedIdsList[i]);
-      }
-
-      state.checkedIds = {};
-      state.bulkDeleteMode = false;
-      if (els.bulkDeleteModeBtn) els.bulkDeleteModeBtn.classList.remove("active");
-      saveState();
-      renderPresetTree();
+        for (var i = 0; i < checkedIdsList.length; i += 1) {
+          removeNode(state.presetTree, checkedIdsList[i]);
+        }
+        state.checkedIds = {};
+        state.bulkDeleteMode = false;
+        if (els.bulkDeleteModeBtn) els.bulkDeleteModeBtn.classList.remove("active");
+        saveState();
+        renderPresetTree();
+        toast("success", "Deleted " + checkedIdsList.length + " item(s).");
+      });
     });
   }
 
@@ -2007,18 +2063,43 @@
 
   // ── Import files ──
 
+  function normalizedPath(path) {
+    return String(path || "").replace(/\\/g, "/").toLowerCase();
+  }
+
+  function addImportedPresetNodes(nodes) {
+    if (!nodes || !nodes.length) return;
+    var existing = {};
+    var all = flattenPresets(state.presetTree);
+    for (var i = 0; i < all.length; i += 1) existing[normalizedPath(all[i].path)] = true;
+    var added = [];
+    assignIds(nodes);
+    for (var n = 0; n < nodes.length; n += 1) {
+      var key = normalizedPath(nodes[n].path);
+      if (key && existing[key]) continue;
+      if (key) existing[key] = true;
+      state.presetTree.push(nodes[n]);
+      added.push(nodes[n]);
+    }
+    if (!added.length) return;
+    state.selectedId = added[added.length - 1].id;
+    saveState();
+    renderPresetTree();
+  }
+
+  function saveSelectedAnimationPreset(autoSelect) {
+    callAe("SORI_TOOLS.saveSelectedAnimationPresetWithImport(" + (autoSelect ? "true" : "false") + ")", function (data) {
+      if (data && data.ok && data.data && data.data.length) {
+        addImportedPresetNodes(data.data);
+      }
+    }, els.savePresetBtn || els.addPresetBtn);
+  }
+
   function choosePresetFiles() {
     if (window.__adobe_cep__ && window.__adobe_cep__.evalScript) {
       callAe("SORI_TOOLS.importPresetFilesWithCopy()", function (data) {
         if (data && data.ok && data.data && data.data.length) {
-          var newNodes = data.data;
-          assignIds(newNodes);
-          for (var n = 0; n < newNodes.length; n += 1) {
-            state.presetTree.push(newNodes[n]);
-          }
-          state.selectedId = newNodes[newNodes.length - 1].id;
-          saveState();
-          renderPresetTree();
+          addImportedPresetNodes(data.data);
         }
       });
       return;
@@ -2122,23 +2203,19 @@
     }).then(function (result) {
       if (!result.isConfirmed) return;
 
-      // Delete physical file for presets
-      if (node.type === "preset" && node.path) {
-        callAe("SORI_TOOLS.deletePresetFile(" + q(node.path) + ")");
-      } else if (node.type === "folder") {
-        // Delete all preset files in folder
-        var allPresets = flattenPresets([node]);
-        for (var i = 0; i < allPresets.length; i += 1) {
-          if (allPresets[i].path) {
-            callAe("SORI_TOOLS.deletePresetFile(" + q(allPresets[i].path) + ")");
-          }
+      var deleteId = state.selectedId;
+      var paths = presetPathsFromNode(node);
+      deletePresetFiles(paths, function (failed) {
+        if (failed.length) {
+          toast("error", "Could not delete preset file. List unchanged.");
+          return;
         }
-      }
-
-      removeNode(state.presetTree, state.selectedId);
-      state.selectedId = state.presetTree.length ? state.presetTree[0].id : "";
-      saveState();
-      renderPresetTree();
+        removeNode(state.presetTree, deleteId);
+        state.selectedId = state.presetTree.length ? state.presetTree[0].id : "";
+        saveState();
+        renderPresetTree();
+        toast("success", "Deleted.");
+      });
     });
   }
 
@@ -2263,8 +2340,6 @@
       if (response && response.ok && response.data) {
         boostRun.active = response.data.active === true;
         boostRun.loading = false;
-        if (boostRun.active) startBoostWatcher();
-        else stopBoostWatcher();
         renderBoostButtonState();
       }
     });
@@ -2376,10 +2451,8 @@
         if (response && response.ok) {
           boostRun.active = turningOn;
           if (turningOn) {
-            startBoostWatcher();
             toast("success", boostResponseSummary(response, response.message || (refreshOnly ? "Boost refreshed." : "Boost enabled.")));
           } else {
-            stopBoostWatcher();
             toast("success", response.message || "Boost restored.");
           }
         } else {
@@ -2459,37 +2532,6 @@
       return;
     } catch (error) {}
     if (callback) callback();
-  }
-
-  function startBoostWatcher() {
-    stopBoostWatcher();
-    boostWatcher.signature = "";
-    boostWatcher.timer = window.setInterval(checkBoostAutoRefresh, 4000);
-  }
-
-  function stopBoostWatcher() {
-    if (boostWatcher.timer) window.clearInterval(boostWatcher.timer);
-    boostWatcher.timer = 0;
-    boostWatcher.signature = "";
-    boostWatcher.running = false;
-  }
-
-  function checkBoostAutoRefresh() {
-    if (!boostRun.active || boostRun.loading || boostWatcher.running) return;
-    boostWatcher.running = true;
-    callAeQuiet("SORI_TOOLS.boostSignature()", function (response) {
-      boostWatcher.running = false;
-      if (!boostRun.active || boostRun.loading || !response || !response.ok || !response.data) return;
-      var signature = String(response.data.signature || "");
-      if (!signature) return;
-      if (!boostWatcher.signature) {
-        boostWatcher.signature = signature;
-        return;
-      }
-      if (signature === boostWatcher.signature) return;
-      boostWatcher.signature = signature;
-      runBoostAction(true, true);
-    });
   }
 
   function renderBoostButtonState() {

@@ -70,7 +70,7 @@ body {
 }
 
 .brand { display: flex; align-items: center; gap: 8px; }
-.brand-link { display: inline-flex; align-items: center; cursor: pointer; }
+.brand-link { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; text-decoration: none; color: inherit; }
 .brand-logo { height: 18px; width: auto; object-fit: contain; }
 .brand-label { font-weight: 600; font-size: 12px; color: var(--text); letter-spacing: 0.3px; }
 
