@@ -2,9 +2,12 @@
   "use strict";
 
   var STORAGE_KEY = "sori.tools.state.v1";
+  var AEP_STORAGE_KEY = "sori.tools.aep.v1";
   var cs = new CSInterface();
   var els = {};
   var state = { presetTree: [], selectedId: "", bulkDeleteMode: false, checkedIds: {}, searchQuery: "", searchBusy: false };
+  var aepState = { items: [], selectedId: "", selectionMode: false, checkedIds: {} };
+  var aepDrag = { srcId: null, mode: null };
   var treeDrag = { srcId: null, mode: null };
   var fullMakerClickAt = 0;
   var alignContextClickAt = 0;
@@ -51,6 +54,7 @@
     wireEvents();
     setupThemedTooltips();
     renderPresetTree();
+    loadAepState();
   }
 
   function ensureSwalFallback() {
@@ -184,6 +188,18 @@
     els.presetList = document.getElementById("presetList");
     els.presetDropZone = document.getElementById("presetDropZone");
     els.presetEmpty = document.getElementById("presetEmpty");
+    els.aepLibraryBtn = document.getElementById("aepLibraryBtn");
+    els.aepLibraryModal = document.getElementById("aepLibraryModal");
+    els.aepModalCloseBtn = document.getElementById("aepModalCloseBtn");
+    els.aepSearchWrap = document.getElementById("aepSearchWrap");
+    els.aepSearch = document.getElementById("aepSearch");
+    els.aepSearchClearBtn = document.getElementById("aepSearchClearBtn");
+    els.aepSearchSpinner = document.getElementById("aepSearchSpinner");
+    els.aepImportBtn = document.getElementById("aepImportBtn");
+    els.aepSelectionModeBtn = document.getElementById("aepSelectionModeBtn");
+    els.aepDropZone = document.getElementById("aepDropZone");
+    els.aepList = document.getElementById("aepList");
+    els.aepEmpty = document.getElementById("aepEmpty");
   }
 
   function wireEvents() {
@@ -408,6 +424,25 @@
         renderPresetTree();
       }
     });
+
+    // AEP Library events
+    if (els.aepLibraryBtn) els.aepLibraryBtn.addEventListener("click", openAepLibraryModal);
+    if (els.aepModalCloseBtn) els.aepModalCloseBtn.addEventListener("click", function () { closeAepLibraryModal(); });
+    if (els.aepImportBtn) els.aepImportBtn.addEventListener("click", importAepFile);
+    if (els.aepSelectionModeBtn) els.aepSelectionModeBtn.addEventListener("click", toggleAepSelectionMode);
+    if (els.aepSearch) els.aepSearch.addEventListener("input", handleAepSearchInput);
+    if (els.aepSearchClearBtn) els.aepSearchClearBtn.addEventListener("click", clearAepSearch);
+    if (els.aepLibraryModal) {
+      els.aepLibraryModal.addEventListener("click", function (e) {
+        if (e.target === els.aepLibraryModal) closeAepLibraryModal();
+      });
+    }
+    if (els.aepDropZone) {
+      els.aepDropZone.addEventListener("click", clearAepSelectionOnEmptyClick);
+      els.aepDropZone.addEventListener("dragover", aepDragOver);
+      els.aepDropZone.addEventListener("dragleave", aepDragLeave);
+      els.aepDropZone.addEventListener("drop", aepDrop);
+    }
   }
 
   function anchorClick() {
@@ -545,7 +580,9 @@
       allowOutsideClick: true,
       allowEscapeKey: true,
       showConfirmButton: false,
-      customClass: { popup: "soritools-popup" }
+      customClass: { popup: "soritools-popup" },
+      showClass: { popup: "sori-swal-show", backdrop: "sori-swal-backdrop-show" },
+      hideClass: { popup: "sori-swal-hide", backdrop: "sori-swal-backdrop-hide" }
     };
 
     if (Swal.isVisible && Swal.isVisible()) {
@@ -1247,6 +1284,8 @@
         popup: "soritools-popup",
         confirmButton: "soritools-confirm"
       },
+      showClass: { popup: "sori-swal-show", backdrop: "sori-swal-backdrop-show" },
+      hideClass: { popup: "sori-swal-hide", backdrop: "sori-swal-backdrop-hide" },
       allowOutsideClick: true,
       allowEscapeKey: true,
       didOpen: function () {
@@ -1596,7 +1635,7 @@
       return;
     }
 
-    closeContextMenu();
+    closeContextMenu(true);
 
     var menu = document.createElement("div");
     menu.className = "preset-menu";
@@ -1661,7 +1700,7 @@
     state.selectedId = id;
     renderPresetTree();
 
-    closeContextMenu();
+    closeContextMenu(true);
 
     var node = findNode(id);
     if (!node) return;
@@ -1744,10 +1783,17 @@
     }
   }
 
-  function closeContextMenu() {
-    var menu = document.querySelector(".preset-menu");
+  function closeContextMenu(immediate) {
+    var menu = document.querySelector(".preset-menu:not(.aep-context-menu)");
     if (menu && menu.parentNode) {
-      menu.parentNode.removeChild(menu);
+      if (immediate) {
+        menu.parentNode.removeChild(menu);
+      } else {
+        menu.classList.add("is-closing");
+        window.setTimeout(function () {
+          if (menu.parentNode) menu.parentNode.removeChild(menu);
+        }, 120);
+      }
     }
     document.removeEventListener("mousedown", closeContextMenuOnce);
     document.removeEventListener("keydown", closeContextMenuOnEscape);
@@ -1879,7 +1925,7 @@
   }
 
   function openBulkContextMenu(e) {
-    closeContextMenu();
+    closeContextMenu(true);
 
     var checkedCount = 0;
     for (var k in state.checkedIds) {
@@ -2016,7 +2062,15 @@
       buttonsStyling: true,
       confirmButtonColor: "#7A43F5",
       denyButtonColor: "#9B6DFF",
-      cancelButtonColor: "#2d2d2d"
+      cancelButtonColor: "#2d2d2d",
+      showClass: {
+        popup: "sori-swal-show",
+        backdrop: "sori-swal-backdrop-show"
+      },
+      hideClass: {
+        popup: "sori-swal-hide",
+        backdrop: "sori-swal-backdrop-hide"
+      }
     };
     for (var mergeKey in options) {
       if (options.hasOwnProperty(mergeKey)) merged[mergeKey] = options[mergeKey];
@@ -2506,7 +2560,9 @@
         allowEscapeKey: false,
         customClass: {
           popup: "soritools-popup soritools-boost-popup"
-        }
+        },
+        showClass: { popup: "sori-swal-show", backdrop: "sori-swal-backdrop-show" },
+        hideClass: { popup: "sori-swal-hide", backdrop: "sori-swal-backdrop-hide" }
       });
     } catch (error) {}
   }
@@ -2611,6 +2667,12 @@
         showConfirmButton: false,
         timer: 1800,
         timerProgressBar: true,
+        showClass: {
+          popup: "sori-toast-show"
+        },
+        hideClass: {
+          popup: "sori-toast-hide"
+        },
         customClass: {
           popup: "soritools-toast"
         },
@@ -2733,6 +2795,664 @@
 
     toastElement.addEventListener("mousedown", start, false);
     toastElement.addEventListener("touchstart", start, false);
+  }
+
+  /* ───────────────────────────────────────────────────────────────────
+     AEP LIBRARY
+     ─────────────────────────────────────────────────────────────────── */
+
+  function openAepLibraryModal() {
+    if (els.aepLibraryModal) {
+      els.aepLibraryModal.classList.remove("is-closing");
+      els.aepLibraryModal.style.display = "";
+      aepState.selectedId = "";
+      renderAepList();
+      syncAepSearchUi();
+      if (els.aepSearch) {
+        window.setTimeout(function () { els.aepSearch.focus(); }, 0);
+      }
+    }
+  }
+
+  function closeAepLibraryModal(onDone) {
+    if (!els.aepLibraryModal || els.aepLibraryModal.style.display === "none") {
+      if (onDone) onDone();
+      return;
+    }
+    els.aepLibraryModal.classList.add("is-closing");
+    window.setTimeout(function () {
+      if (els.aepLibraryModal) {
+        els.aepLibraryModal.style.display = "none";
+        els.aepLibraryModal.classList.remove("is-closing");
+      }
+      if (onDone) onDone();
+    }, 180);
+  }
+
+  function closeAepContextMenuOnce(event) {
+    var menu = document.querySelector(".aep-context-menu");
+    if (menu && event && menu.contains(event.target)) return;
+    closeAepContextMenu();
+  }
+
+  function closeAepContextMenuOnEscape(event) {
+    if (event.key === "Escape") closeAepContextMenu();
+  }
+
+  function closeAepContextMenu(immediate) {
+    var menu = document.querySelector(".aep-context-menu");
+    if (menu && menu.parentNode) {
+      if (immediate) {
+        menu.parentNode.removeChild(menu);
+      } else {
+        menu.classList.add("is-closing");
+        window.setTimeout(function () {
+          if (menu.parentNode) menu.parentNode.removeChild(menu);
+        }, 120);
+      }
+    }
+    document.removeEventListener("mousedown", closeAepContextMenuOnce);
+    document.removeEventListener("keydown", closeAepContextMenuOnEscape);
+  }
+
+  function openAepSelectionMenu(e) {
+    closeAepContextMenu(true);
+
+    var checkedCount = 0;
+    for (var k in aepState.checkedIds) {
+      if (aepState.checkedIds[k]) checkedCount += 1;
+    }
+
+    var menu = document.createElement("div");
+    menu.className = "preset-menu aep-context-menu";
+    menu.innerHTML = '<button type="button" data-action="delete-checked" ' + (checkedCount === 0 ? "disabled" : "") + '><span>Delete Checked (' + checkedCount + ')</span></button>' +
+      '<button type="button" data-action="clear-checked"><span>Clear Selection</span></button>';
+
+    menu.addEventListener("click", function (menuEvent) {
+      var actionBtn = closestActionButton(menuEvent.target);
+      if (!actionBtn) return;
+      var action = actionBtn.getAttribute("data-action");
+      closeAepContextMenu();
+      if (action === "delete-checked") deleteCheckedAepItems();
+      else if (action === "clear-checked") {
+        aepState.checkedIds = {};
+        aepState.selectionMode = false;
+        saveAepState();
+        renderAepList();
+      }
+    });
+
+    document.body.appendChild(menu);
+    positionMenu(menu, e);
+
+    window.setTimeout(function () {
+      document.addEventListener("mousedown", closeAepContextMenuOnce);
+      document.addEventListener("keydown", closeAepContextMenuOnEscape);
+    }, 0);
+  }
+
+  function getAepSearchQuery() {
+    return normalizeSearch(els.aepSearch ? els.aepSearch.value : "");
+  }
+
+  function syncAepSearchUi() {
+    if (!els.aepSearchWrap) return;
+    var hasQuery = !!getAepSearchQuery();
+    els.aepSearchWrap.classList.toggle("has-query", hasQuery);
+    els.aepSearchWrap.classList.toggle("is-searching", false);
+  }
+
+  function handleAepSearchInput() {
+    syncAepSearchUi();
+    renderAepList();
+  }
+
+  function clearAepSearch() {
+    if (!els.aepSearch) return;
+    els.aepSearch.value = "";
+    syncAepSearchUi();
+    renderAepList();
+    els.aepSearch.focus();
+  }
+
+  function clearAepSelectionOnEmptyClick(e) {
+    if (closestAepItem(e.target) || closestAepActionBtn(e.target)) return;
+    if (!aepState.selectedId) return;
+    aepState.selectedId = "";
+    saveAepState();
+    renderAepList();
+  }
+
+  function toggleAepSelectionMode() {
+    aepState.selectionMode = !aepState.selectionMode;
+    aepState.checkedIds = {};
+    closeAepContextMenu();
+    saveAepState();
+    renderAepList();
+  }
+
+  function hasCheckedAepItems() {
+    for (var k in aepState.checkedIds) {
+      if (aepState.checkedIds[k]) return true;
+    }
+    return false;
+  }
+
+  function toggleAepItemCheck(id, checked) {
+    aepState.checkedIds[id] = checked;
+    saveAepState();
+    renderAepList();
+  }
+
+  function deleteCheckedAepItems() {
+    var checkedIds = [];
+    for (var k in aepState.checkedIds) {
+      if (aepState.checkedIds[k]) checkedIds.push(k);
+    }
+    if (!checkedIds.length) {
+      aepState.selectionMode = false;
+      saveAepState();
+      renderAepList();
+      return;
+    }
+    closeAepContextMenu();
+    closeAepLibraryModal(function () {
+      popup({
+        title: "Delete AEP?",
+        text: "This will delete " + checkedIds.length + " item(s) permanently.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel"
+      }).then(function (result) {
+        if (!result || !result.isConfirmed) {
+          openAepLibraryModal();
+          return;
+        }
+        for (var i = 0; i < checkedIds.length; i += 1) {
+          var id = checkedIds[i];
+          for (var j = 0; j < aepState.items.length; j += 1) {
+            if (aepState.items[j].id === id) {
+              callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: aepState.items[j].folder })) + ")");
+              aepState.items.splice(j, 1);
+              break;
+            }
+          }
+        }
+        aepState.checkedIds = {};
+        aepState.selectionMode = false;
+        saveAepState();
+        renderAepList();
+        openAepLibraryModal();
+        toast("success", "Deleted " + checkedIds.length + " item(s).");
+      });
+    });
+  }
+
+  function showAepItemMenu(e, item) {
+    closeAepContextMenu(true);
+
+    var menu = document.createElement("div");
+    menu.className = "preset-menu aep-context-menu";
+    menu.innerHTML = '<button type="button" data-aep-menu="import"><span>Import comps</span></button>' +
+      '<button type="button" data-aep-menu="export"><span>Export AEP</span></button>' +
+      '<button type="button" data-aep-menu="recollect"><span>Re-collect footage</span></button>' +
+      '<button type="button" data-aep-menu="rename"><span>Rename</span></button>' +
+      '<button type="button" data-aep-menu="reveal"><span>Reveal folder</span></button>' +
+      '<button type="button" class="danger" data-aep-menu="delete"><span>Delete</span></button>';
+
+    menu.addEventListener("click", function (menuEvent) {
+      var actionBtn = closestAepMenuButton(menuEvent.target);
+      if (!actionBtn) return;
+      var action = actionBtn.getAttribute("data-aep-menu");
+      menuEvent.preventDefault();
+      menuEvent.stopPropagation();
+      closeAepContextMenu();
+      if (action === "import") importAllAepComps(item);
+      else if (action === "export") exportAepItem(item);
+      else if (action === "recollect") recollectAepFootage(item);
+      else if (action === "rename") renameAepItem(item);
+      else if (action === "reveal") revealAepFolder(item);
+      else if (action === "delete") window.setTimeout(function () { deleteAepItem(item); }, 0);
+    });
+
+    document.body.appendChild(menu);
+    positionMenu(menu, e);
+
+    window.setTimeout(function () {
+      document.addEventListener("mousedown", closeAepContextMenuOnce);
+      document.addEventListener("keydown", closeAepContextMenuOnEscape);
+    }, 0);
+  }
+
+  function importAepFile() {
+    callAe("SORI_TOOLS.importAepFile()", function (data) {
+      if (data && data.ok && data.data) {
+        addAepItem(data.data);
+        closeAepLibraryModal();
+      }
+    }, els.aepImportBtn);
+  }
+
+  function importDroppedAepItems(paths) {
+    callAe("SORI_TOOLS.importDroppedAepItems(" + q(JSON.stringify(paths)) + ")", function (data) {
+      if (data && data.ok && data.data && data.data.length) {
+        for (var n = 0; n < data.data.length; n += 1) {
+          addAepItem(data.data[n]);
+        }
+        closeAepLibraryModal();
+      }
+    });
+  }
+
+  function renameAepItem(item) {
+    closeAepContextMenu();
+    closeAepLibraryModal(function () {
+      popup({
+        title: "Rename AEP",
+        text: "Type new project name.",
+        input: "text",
+        inputValue: item.name,
+        showCancelButton: true,
+        confirmButtonText: "Rename",
+        cancelButtonText: "Cancel",
+        inputValidator: function (value) {
+          if (!value || !value.trim()) return "Name cannot be empty.";
+        }
+      }).then(function (result) {
+        if (!result || !result.isConfirmed) {
+          openAepLibraryModal();
+          return;
+        }
+        var nextName = result.value ? result.value.trim() : "";
+        if (!nextName || nextName === item.name) {
+          openAepLibraryModal();
+          return;
+        }
+        callAeQuiet("SORI_TOOLS.renameAepLibraryItem(" + q(JSON.stringify({ folder: item.folder, name: nextName })) + ")", function (response) {
+          if (response && response.ok && response.data) {
+            item.name = response.data.name || nextName;
+            item.path = response.data.path || item.path;
+            item.folder = response.data.folder || item.folder;
+            saveAepState();
+          }
+          renderAepList();
+          openAepLibraryModal();
+        });
+      });
+    });
+  }
+
+  function addAepItem(item) {
+    if (!item || !item.path) return;
+    for (var i = 0; i < aepState.items.length; i += 1) {
+      if (normalizedPath(aepState.items[i].path) === normalizedPath(item.path)) return;
+    }
+    item.id = uid();
+    aepState.items.push(item);
+    saveAepState();
+    renderAepList();
+  }
+
+  function findAepItemIndex(id) {
+    for (var i = 0; i < aepState.items.length; i += 1) {
+      if (aepState.items[i].id === id) return i;
+    }
+    return -1;
+  }
+
+  function clearAepDropIndicators() {
+    if (!els.aepList) return;
+    var all = els.aepList.querySelectorAll(".drop-above, .drop-below");
+    for (var i = 0; i < all.length; i += 1) {
+      all[i].classList.remove("drop-above", "drop-below");
+    }
+  }
+
+  function aepItemDragStart(e) {
+    var row = closestAepItem(e.target);
+    if (!row) return;
+    aepDrag.srcId = row.getAttribute("data-id");
+    aepDrag.mode = "reorder";
+    try { e.dataTransfer.effectAllowed = "move"; } catch (err) {}
+    try { e.dataTransfer.setData("text/plain", aepDrag.srcId); } catch (err2) {}
+  }
+
+  function aepItemDragOver(e) {
+    if (aepDrag.mode !== "reorder") return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.dataTransfer.dropEffect = "move"; } catch (err) {}
+
+    var row = closestAepItem(e.target);
+    clearAepDropIndicators();
+    if (!row) return;
+
+    var targetId = row.getAttribute("data-id");
+    if (targetId === aepDrag.srcId) return;
+
+    var rect = row.getBoundingClientRect();
+    var y = e.clientY - rect.top;
+    if (y < rect.height / 2) row.classList.add("drop-above");
+    else row.classList.add("drop-below");
+  }
+
+  function aepItemDragLeave(e) {
+    var row = closestAepItem(e.target);
+    if (row) row.classList.remove("drop-above", "drop-below");
+  }
+
+  function aepItemDropReorder(e) {
+    if (aepDrag.mode !== "reorder" || !aepDrag.srcId) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    clearAepDropIndicators();
+
+    var row = closestAepItem(e.target);
+    if (!row) return true;
+
+    var targetId = row.getAttribute("data-id");
+    if (targetId === aepDrag.srcId) return true;
+
+    var srcIndex = findAepItemIndex(aepDrag.srcId);
+    var targetIndex = findAepItemIndex(targetId);
+    if (srcIndex < 0 || targetIndex < 0) return true;
+
+    var srcItem = aepState.items.splice(srcIndex, 1)[0];
+    if (!srcItem) return true;
+
+    if (srcIndex < targetIndex) targetIndex -= 1;
+    var rect = row.getBoundingClientRect();
+    var y = e.clientY - rect.top;
+    if (y < rect.height / 2) aepState.items.splice(targetIndex, 0, srcItem);
+    else aepState.items.splice(targetIndex + 1, 0, srcItem);
+
+    aepState.selectedId = srcItem.id;
+    saveAepState();
+    renderAepList();
+    return true;
+  }
+
+  function aepItemDragEnd() {
+    aepDrag.srcId = null;
+    aepDrag.mode = null;
+    clearAepDropIndicators();
+  }
+
+  function closestAepItem(el) {
+    while (el && el !== document) {
+      if (el.getAttribute && el.getAttribute("data-id")) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function exportAepItem(item) {
+    if (!item || !item.path) return;
+    callAe("SORI_TOOLS.exportAepLibraryItem(" + q(JSON.stringify({ path: item.path, name: item.name })) + ")");
+  }
+
+  function renderAepList() {
+    if (!els.aepList || !els.aepEmpty) return;
+    els.aepList.innerHTML = "";
+    if (els.aepSelectionModeBtn) els.aepSelectionModeBtn.classList.toggle("active", !!aepState.selectionMode);
+
+    var query = getAepSearchQuery();
+    var visibleCount = 0;
+    syncAepSearchUi();
+    clearAepDropIndicators();
+
+    for (var i = 0; i < aepState.items.length; i += 1) {
+      var item = aepState.items[i];
+      if (query && normalizeSearch(item.name).indexOf(query) === -1) continue;
+      visibleCount += 1;
+      var row = document.createElement("div");
+      row.className = "aep-item" + (item.id === aepState.selectedId ? " is-selected" : "") + (aepState.selectionMode ? " is-selection-mode" : "") + (aepState.checkedIds[item.id] ? " is-checked" : "");
+      row.setAttribute("title", aepState.selectionMode ? "Click: Check item · Right-click: Options" : "Click: Select · Double-click: Import all comps · Shift+Click: Pick comps");
+      row.setAttribute("draggable", "true");
+      row.setAttribute("data-id", item.id);
+
+      row.innerHTML = (aepState.selectionMode ? '<input class="aep-check" type="checkbox" ' + (aepState.checkedIds[item.id] ? 'checked' : '') + '>' : '') +
+        '<span class="aep-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></span>' +
+        '<span class="aep-item-name-wrap"><span class="aep-item-name">' + esc(item.name) + '</span></span>' +
+        '<button class="aep-item-action-btn aep-export-btn" data-aep-action="export" title="Export AEP" aria-label="Export AEP"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></button>';
+
+      (function (aepItem, rowEl) {
+        rowEl.addEventListener("click", function (e) {
+          var actionBtn = closestAepActionBtn(e.target);
+          if (actionBtn) {
+            e.stopPropagation();
+            if (actionBtn.getAttribute("data-aep-action") === "export") exportAepItem(aepItem);
+            return;
+          }
+          if (aepState.selectionMode) {
+            toggleAepItemCheck(aepItem.id, !aepState.checkedIds[aepItem.id]);
+            return;
+          }
+          aepState.selectedId = aepItem.id;
+          saveAepState();
+          renderAepList();
+          if (e.shiftKey) openAepCompPicker(aepItem);
+        });
+
+        rowEl.addEventListener("dblclick", function (e) {
+          if (aepState.selectionMode) return;
+          e.preventDefault();
+          e.stopPropagation();
+          aepState.selectedId = aepItem.id;
+          saveAepState();
+          renderAepList();
+          importAllAepComps(aepItem);
+        });
+
+        rowEl.addEventListener("contextmenu", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          aepState.selectedId = aepItem.id;
+          saveAepState();
+          renderAepList();
+          if (aepState.selectionMode) openAepSelectionMenu(e);
+          else showAepItemMenu(e, aepItem);
+        });
+
+        rowEl.addEventListener("dragstart", aepItemDragStart);
+        rowEl.addEventListener("dragover", aepItemDragOver);
+        rowEl.addEventListener("dragleave", aepItemDragLeave);
+        rowEl.addEventListener("drop", aepItemDropReorder);
+        rowEl.addEventListener("dragend", aepItemDragEnd);
+      })(item, row);
+
+      els.aepList.appendChild(row);
+    }
+
+    els.aepEmpty.style.display = visibleCount ? "none" : "";
+    els.aepEmpty.textContent = aepState.items.length ? "No AEP found." : "Drop .aep files here or click Import AEP";
+  }
+
+  function closestAepActionBtn(el) {
+    while (el && el !== document) {
+      if (el.getAttribute && el.getAttribute("data-aep-action")) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function closestAepMenuButton(el) {
+    while (el && el !== document) {
+      if (el.getAttribute && el.getAttribute("data-aep-menu") && String(el.tagName || "").toLowerCase() === "button") return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function importAllAepComps(item) {
+    callAeQuiet("SORI_TOOLS.listAepComps(" + q(item.path) + ")", function (data) {
+      if (!data || !data.ok || !data.data || !data.data.length) return;
+      var comps = data.data;
+      var selectedNames = [];
+      for (var i = 0; i < comps.length; i += 1) {
+        selectedNames.push(comps[i].name);
+      }
+      var payload = { path: item.path, compNames: selectedNames };
+      callAeQuiet("SORI_TOOLS.importAepComps(" + q(JSON.stringify(payload)) + ")", function () {
+        closeAepLibraryModal();
+      });
+    });
+  }
+
+  function openAepCompPicker(item) {
+    closeAepContextMenu();
+    closeAepLibraryModal(function () {
+      callAeQuiet("SORI_TOOLS.listAepComps(" + q(item.path) + ")", function (data) {
+        if (!data || !data.ok || !data.data || !data.data.length) {
+          openAepLibraryModal();
+          return;
+        }
+
+      var comps = data.data;
+      var html = '<div class="aep-comp-picker">';
+      for (var i = 0; i < comps.length; i += 1) {
+        var c = comps[i];
+        html += '<label title="' + esc(c.name) + '"><input type="checkbox" value="' + esc(c.name) + '" checked>' +
+          '<span>' + esc(c.name) + '</span>' +
+          '<span class="aep-comp-info">' + c.width + 'x' + c.height + ' · ' + Math.round(c.duration * 100) / 100 + 's</span>' +
+          '</label>';
+      }
+      html += '</div>';
+
+      popup({
+        title: "Import Comps from " + item.name,
+        html: html,
+        showCancelButton: true,
+        confirmButtonText: "Import Selected",
+        cancelButtonText: "Cancel",
+        customClass: { popup: "soritools-popup" }
+      }).then(function (result) {
+        if (!result || !result.isConfirmed) return;
+
+        var selectedNames = [];
+        try {
+          var popupEl = document.querySelector(".swal2-popup");
+          if (popupEl) {
+            var checkboxes = popupEl.querySelectorAll('.aep-comp-picker input[type="checkbox"]');
+            for (var j = 0; j < checkboxes.length; j += 1) {
+              if (checkboxes[j].checked) selectedNames.push(checkboxes[j].value);
+            }
+          }
+        } catch (e) {}
+
+        if (!selectedNames.length) {
+          for (var k = 0; k < comps.length; k += 1) selectedNames.push(comps[k].name);
+        }
+
+        var payload = { path: item.path, compNames: selectedNames };
+        callAeQuiet("SORI_TOOLS.importAepComps(" + q(JSON.stringify(payload)) + ")", function () {
+          closeAepLibraryModal();
+        });
+      });
+    });
+    });
+  }
+
+  function deleteAepItem(item) {
+    closeAepContextMenu();
+    closeAepLibraryModal(function () {
+      popup({
+        title: "Delete AEP?",
+        text: item.name + " and all collected footage will be permanently deleted.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel"
+      }).then(function (result) {
+        if (!result || !result.isConfirmed) {
+          openAepLibraryModal();
+          return;
+        }
+
+        callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: item.folder })) + ")", function () {
+          for (var i = 0; i < aepState.items.length; i += 1) {
+            if (aepState.items[i].id === item.id) {
+              aepState.items.splice(i, 1);
+              break;
+            }
+          }
+          if (aepState.selectedId === item.id) aepState.selectedId = "";
+          saveAepState();
+          renderAepList();
+          openAepLibraryModal();
+          toast("success", "Deleted " + item.name + ".");
+        });
+      });
+    });
+  }
+
+  function revealAepFolder(item) {
+    callAeQuiet("SORI_TOOLS.revealAepFolder(" + q(JSON.stringify({ folder: item.folder })) + ")");
+  }
+
+  function recollectAepFootage(item) {
+    callAe("SORI_TOOLS.recollectAepFootage(" + q(JSON.stringify({ path: item.path, folder: item.folder })) + ")");
+  }
+
+  function aepDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    if (els.aepDropZone) els.aepDropZone.classList.add("is-drag-active");
+  }
+
+  function aepDragLeave(e) {
+    e.stopPropagation();
+    if (els.aepDropZone) els.aepDropZone.classList.remove("is-drag-active");
+  }
+
+  function aepDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (els.aepDropZone) els.aepDropZone.classList.remove("is-drag-active");
+
+    var files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+
+    var paths = [];
+    for (var i = 0; i < files.length; i += 1) {
+      var filePath = files[i].path || files[i].name || "";
+      if (filePath && /\.aepx?$/i.test(filePath)) paths.push(filePath);
+    }
+
+    if (!paths.length) {
+      toast("warning", "No .aep files found.");
+      return;
+    }
+
+    importDroppedAepItems(paths);
+  }
+
+  function loadAepState() {
+    try {
+      var raw = localStorage.getItem(AEP_STORAGE_KEY);
+      if (!raw) return;
+      var saved = JSON.parse(raw);
+      aepState.items = saved.items || [];
+      aepState.selectedId = saved.selectedId || "";
+      aepState.selectionMode = saved.selectionMode === true;
+      aepState.checkedIds = saved.checkedIds || {};
+      for (var i = 0; i < aepState.items.length; i += 1) {
+        if (!aepState.items[i].id) aepState.items[i].id = uid();
+      }
+    } catch (error) {}
+  }
+
+  function saveAepState() {
+    try {
+      localStorage.setItem(AEP_STORAGE_KEY, JSON.stringify({
+        items: aepState.items,
+        selectedId: aepState.selectedId,
+        selectionMode: aepState.selectionMode === true,
+        checkedIds: aepState.checkedIds
+      }));
+    } catch (error) {}
   }
 
   function loadState() {

@@ -4604,3 +4604,339 @@ SORI_TOOLS.deletePresetFile = function (payload) {
   }
   return SORI_TOOLS.respond(true, 'Deleted.');
 };
+
+SORI_TOOLS.getAepLibraryDir = function () {
+  var extPath = SORI_TOOLS.getExtensionRoot();
+  if (!extPath) return '';
+  var dir = new Folder(extPath + '/aep-library');
+  if (!dir.exists) dir.create();
+  return dir.fsName;
+};
+
+SORI_TOOLS.exportAepLibraryItem = function (payload) {
+  var data = SORI_TOOLS.parse(payload);
+  if (!data || !data.path) return SORI_TOOLS.respond(false, 'Invalid export request.');
+
+  var src = new File(data.path);
+  if (!src.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
+
+  var destBase = Folder.selectDialog('Select destination folder for AEP export');
+  if (!destBase) return SORI_TOOLS.respond(false, 'Export cancelled.');
+
+  var safeName = decodeURI(data.name || src.name).replace(/[\\\/:\*\?\"<>\|]/g, '_');
+  var dest = new File(destBase.fsName + '/' + safeName + '.aep');
+  if (dest.exists) dest.remove();
+  if (!src.copy(dest)) return SORI_TOOLS.respond(false, 'Could not export AEP file.');
+
+  return SORI_TOOLS.respond(true, 'Exported: ' + safeName);
+};
+
+SORI_TOOLS.importAepFile = function () {
+  var file = File.openDialog('Select AEP file', '*.aep;*.aepx');
+  if (!file) return SORI_TOOLS.respond(false, 'Cancelled.');
+  if (!file.exists) return SORI_TOOLS.respond(false, 'File not found.');
+
+  var libDir = SORI_TOOLS.getAepLibraryDir();
+  if (!libDir) return SORI_TOOLS.respond(false, 'Could not resolve AEP library folder.');
+
+  var safeName = decodeURI(file.name).replace(/[\\\/:\*\?\"<>\|]/g, '_');
+  var destFolder = new Folder(libDir + '/' + safeName.replace(/\.aepx?$/i, ''));
+  if (!destFolder.exists) destFolder.create();
+
+  var destFile = new File(destFolder.fsName + '/' + safeName);
+  if (!destFile.exists) {
+    if (!file.copy(destFile)) return SORI_TOOLS.respond(false, 'Could not copy AEP to library.');
+  }
+
+  var collected = SORI_TOOLS.collectAepFootage(file, destFolder);
+
+  return SORI_TOOLS.respond(true, (destFile.exists ? 'Already in library.' : 'Imported: ') + safeName + (collected > 0 ? ' Footage collected.' : ''), {
+    type: 'aep',
+    name: safeName.replace(/\.aepx?$/i, ''),
+    path: destFile.fsName,
+    folder: destFolder.fsName
+  });
+};
+
+SORI_TOOLS.collectAepFootage = function (aepFile, destFolder) {
+  var collected = 0;
+  try {
+    var footageFolder = new Folder(destFolder.fsName + '/footage');
+    if (!footageFolder.exists) footageFolder.create();
+
+    var sourceFolder = aepFile.parent;
+    if (!sourceFolder || !sourceFolder.exists) return 0;
+
+    function copyEntry(entry, targetFolder) {
+      try {
+        if (entry instanceof Folder) {
+          var nextFolder = new Folder(targetFolder.fsName + '/' + entry.name);
+          if (!nextFolder.exists) nextFolder.create();
+          var nested = entry.getFiles();
+          for (var n = 0; n < nested.length; n += 1) {
+            copyEntry(nested[n], nextFolder);
+          }
+          return;
+        }
+
+        if (!(entry instanceof File)) return;
+        if (entry.fsName === aepFile.fsName) return;
+
+        var destFile = new File(targetFolder.fsName + '/' + entry.name);
+        var counter = 1;
+        while (destFile.exists && destFile.fsName !== entry.fsName) {
+          var base = decodeURI(entry.name).replace(/\.[^\.]+$/, '');
+          var ext = decodeURI(entry.name).match(/\.[^\.]+$/);
+          ext = ext ? ext[0] : '';
+          destFile = new File(targetFolder.fsName + '/' + base + '_' + counter + ext);
+          counter += 1;
+        }
+
+        if (!destFile.exists) {
+          if (entry.copy(destFile)) collected += 1;
+        } else if (destFile.fsName !== entry.fsName) {
+          collected += 1;
+        }
+      } catch (eEntry) {}
+    }
+
+    var entries = sourceFolder.getFiles();
+    for (var i = 0; i < entries.length; i += 1) {
+      copyEntry(entries[i], footageFolder);
+    }
+  } catch (e) {}
+  return collected;
+};
+
+SORI_TOOLS.importDroppedAepItems = function (payload) {
+  var data = SORI_TOOLS.parse(payload);
+  if (!data || !data.length) return SORI_TOOLS.respond(false, 'No items provided.');
+
+  var libDir = SORI_TOOLS.getAepLibraryDir();
+  if (!libDir) return SORI_TOOLS.respond(false, 'Could not resolve AEP library folder.');
+  var imported = [];
+
+  for (var i = 0; i < data.length; i += 1) {
+    try {
+      var path = data[i];
+      var file = new File(path);
+      if (!file.exists || !file.name.match(/\.aepx?$/i)) continue;
+
+      var safeName = decodeURI(file.name).replace(/[\\\/:\*\?\"<>\|]/g, '_');
+      var destFolder = new Folder(libDir + '/' + safeName.replace(/\.aepx?$/i, ''));
+      if (!destFolder.exists) destFolder.create();
+
+      var destFile = new File(destFolder.fsName + '/' + safeName);
+      if (!destFile.exists) {
+        if (!file.copy(destFile)) continue;
+        SORI_TOOLS.collectAepFootage(file, destFolder);
+      }
+
+      imported.push({
+        type: 'aep',
+        name: safeName.replace(/\.aepx?$/i, ''),
+        path: destFile.fsName,
+        folder: destFolder.fsName
+      });
+    } catch (eImport) {}
+  }
+
+  if (!imported.length) return SORI_TOOLS.respond(false, 'No .aep files imported.');
+  return SORI_TOOLS.respond(true, imported.length + ' AEP(s) imported.', imported);
+};
+
+SORI_TOOLS.listAepComps = function (payload) {
+  var aepPath = typeof payload === 'string' ? payload : SORI_TOOLS.parse(payload);
+  if (typeof aepPath !== 'string') aepPath = aepPath && aepPath.path ? aepPath.path : String(payload || '');
+
+  var file = new File(aepPath);
+  if (!file.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
+
+  var comps = [];
+
+  try {
+    var io = new ImportOptions(file);
+    if (io.canImportAs(ImportAsType.PROJECT)) {
+      io.importAs = ImportAsType.PROJECT;
+    }
+
+    var importedFolder = app.project.importFile(io);
+
+    function scanImportedItem(item) {
+      try {
+        if (item instanceof CompItem) {
+          comps.push({
+            name: item.name,
+            index: item.index,
+            width: item.width,
+            height: item.height,
+            duration: item.duration,
+            frameRate: item.frameRate,
+            numLayers: item.numLayers
+          });
+          return;
+        }
+        if (item && item instanceof FolderItem) {
+          for (var k = 1; k <= item.numItems; k += 1) {
+            try { scanImportedItem(item.item(k)); } catch (eWalk) {}
+          }
+        }
+      } catch (eScan) {}
+    }
+
+    if (importedFolder) scanImportedItem(importedFolder);
+  } catch (e2) {
+    return SORI_TOOLS.respond(false, 'Could not read AEP: ' + e2.message);
+  }
+
+  if (!comps.length) return SORI_TOOLS.respond(false, 'No compositions found in AEP.');
+  return SORI_TOOLS.respond(true, comps.length + ' comp(s) found.', comps);
+};
+
+SORI_TOOLS.importAepComps = function (payload) {
+  var data = SORI_TOOLS.parse(payload);
+  if (!data || !data.path || !data.compNames || !data.compNames.length) {
+    return SORI_TOOLS.respond(false, 'Invalid import request.');
+  }
+
+  var file = new File(data.path);
+  if (!file.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
+
+  app.beginUndoGroup('SoriTools Import AEP Comps');
+
+  var imported = 0;
+  var errors = [];
+
+  try {
+    var io = new ImportOptions(file);
+    if (io.canImportAs(ImportAsType.PROJECT)) {
+      io.importAs = ImportAsType.PROJECT;
+    }
+
+    var importedFolder = app.project.importFile(io);
+    if (!importedFolder) {
+      throw new Error('Could not import AEP project.');
+    }
+
+    var nameSet = {};
+    for (var n = 0; n < data.compNames.length; n += 1) {
+      nameSet[data.compNames[n]] = true;
+    }
+
+    function findImportedComps(item, list) {
+      try {
+        if (item instanceof CompItem && nameSet[item.name]) {
+          list.push(item);
+          imported += 1;
+          return;
+        }
+        if (item && item instanceof FolderItem) {
+          for (var c = 1; c <= item.numItems; c += 1) {
+            try { findImportedComps(item.item(c), list); } catch (eCollect) {}
+          }
+        }
+      } catch (ePush) {}
+    }
+
+    var keepItems = [];
+    findImportedComps(importedFolder, keepItems);
+
+  } catch (e) {
+    errors.push(e.message);
+  }
+
+  app.endUndoGroup();
+
+  if (imported === 0) {
+    return SORI_TOOLS.respond(false, 'No comps imported.' + (errors.length ? '\n' + errors[0] : ''));
+  }
+  return SORI_TOOLS.respond(true, 'Imported ' + imported + ' comp(s).', { imported: imported });
+};
+
+SORI_TOOLS.renameAepLibraryItem = function (payload) {
+  try {
+    var data = SORI_TOOLS.parse(payload);
+    var folderPath = data && data.folder ? data.folder : '';
+    var nextName = data && data.name ? String(data.name) : '';
+    if (!folderPath || !nextName) return SORI_TOOLS.respond(false, 'Invalid rename request.');
+
+    var folder = new Folder(folderPath);
+    if (!folder.exists) return SORI_TOOLS.respond(false, 'Folder not found.');
+
+    var parent = folder.parent;
+    var safeName = SORI_TOOLS.cleanName(nextName).replace(/\.aepx?$/i, '');
+    var destFolder = new Folder(parent.fsName + '/' + safeName);
+    var suffix = 2;
+    while (destFolder.exists && destFolder.fsName !== folder.fsName) {
+      destFolder = new Folder(parent.fsName + '/' + safeName + '_' + suffix);
+      suffix += 1;
+    }
+
+    if (destFolder.fsName === folder.fsName) {
+      return SORI_TOOLS.respond(true, 'Renamed.', { name: safeName, folder: folder.fsName, path: folder.fsName + '/' + folder.name });
+    }
+
+    if (!folder.rename(destFolder.name)) return SORI_TOOLS.respond(false, 'Could not rename library folder.');
+
+    var aepName = '';
+    try {
+      var files = destFolder.getFiles('*.aep*');
+      if (files && files.length) aepName = files[0].name;
+    } catch (eFind) {}
+
+    return SORI_TOOLS.respond(true, 'Renamed.', { name: safeName, folder: destFolder.fsName, path: aepName ? destFolder.fsName + '/' + aepName : destFolder.fsName });
+  } catch (eRename) {
+    return SORI_TOOLS.respond(false, 'Rename failed: ' + eRename.message);
+  }
+};
+
+SORI_TOOLS.deleteAepLibraryItem = function (payload) {
+  try {
+    var data = SORI_TOOLS.parse(payload);
+    var folderPath = data && data.folder ? data.folder : '';
+    if (!folderPath) return SORI_TOOLS.respond(false, 'No folder path.');
+
+    var folder = new Folder(folderPath);
+    if (!folder.exists) return SORI_TOOLS.respond(true, 'Already deleted.');
+
+    function removeRecursive(f) {
+      var items = f.getFiles();
+      for (var i = 0; i < items.length; i += 1) {
+        if (items[i] instanceof Folder) removeRecursive(items[i]);
+        else { try { items[i].remove(); } catch (e) {} }
+      }
+      try { f.remove(); } catch (e2) {}
+    }
+
+    removeRecursive(folder);
+    return SORI_TOOLS.respond(true, 'Deleted.');
+  } catch (e) {
+    return SORI_TOOLS.respond(false, 'Delete failed: ' + e.message);
+  }
+};
+
+SORI_TOOLS.recollectAepFootage = function (payload) {
+  var data = SORI_TOOLS.parse(payload);
+  if (!data || !data.path || !data.folder) return SORI_TOOLS.respond(false, 'Invalid recollect request.');
+  var file = new File(data.path);
+  if (!file.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
+  var folder = new Folder(data.folder);
+  if (!folder.exists) return SORI_TOOLS.respond(false, 'Library folder not found.');
+
+  var collected = SORI_TOOLS.collectAepFootage(file, folder);
+  return SORI_TOOLS.respond(true, 'Re-collected ' + collected + ' file(s).', { collected: collected });
+};
+
+SORI_TOOLS.revealAepFolder = function (payload) {
+  try {
+    var data = SORI_TOOLS.parse(payload);
+    var folderPath = data && data.folder ? data.folder : '';
+    if (!folderPath) return SORI_TOOLS.respond(false, 'No folder path.');
+    var folder = new Folder(folderPath);
+    if (!folder.exists) return SORI_TOOLS.respond(false, 'Folder not found.');
+    folder.execute();
+    return SORI_TOOLS.respond(true, 'Opened folder.');
+  } catch (e) {
+    return SORI_TOOLS.respond(false, 'Could not open folder: ' + e.message);
+  }
+};

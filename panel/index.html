@@ -5,7 +5,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>SoriTools</title>
     <link rel="stylesheet" href="../node_modules/sweetalert2/dist/sweetalert2.min.css">
-    <link rel="stylesheet" href="css/styles.css?v=34">
+    <link rel="stylesheet" href="css/styles.css?v=35">
   </head>
   <body ondragover="return false" ondrop="return false">
     <main class="app-shell">
@@ -72,6 +72,9 @@
             <button id="boostBtn" class="action-btn icon-action-btn" title="Boost Mode Off (Click: boost · Right-click: profiles · Shift+Click/Shift+Right-click: boost + selected work area)" aria-label="Boost Mode" aria-pressed="false">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
             </button>
+            <button id="aepLibraryBtn" class="action-btn icon-action-btn" title="AEP Library (Click: open library · Manage and import .aep files)" aria-label="AEP Library">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+            </button>
           </div>
         </div>
 
@@ -126,8 +129,36 @@
     </main>
 
     <input id="presetFile" class="visually-hidden" type="file" accept=".ffx" multiple>
+
+    <div id="aepLibraryModal" class="aep-modal-overlay" style="display:none">
+      <div class="aep-modal">
+        <div class="aep-modal-header">
+          <span class="aep-modal-title">AEP Library</span>
+          <button id="aepModalCloseBtn" class="aep-modal-close" title="Close" aria-label="Close AEP Library">&times;</button>
+        </div>
+        <div class="aep-modal-actions">
+          <div id="aepSearchWrap" class="aep-search-wrap">
+            <svg class="aep-search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="aepSearch" type="text" role="searchbox" placeholder="Search AEP" autocomplete="off" spellcheck="false" aria-label="Search AEP">
+            <span id="aepSearchSpinner" class="aep-search-spinner"></span>
+            <button id="aepSearchClearBtn" class="aep-search-clear" type="button" title="Clear Search" aria-label="Clear Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+          </div>
+          <button id="aepImportBtn" class="icon-action-btn aep-icon-btn" title="Import AEP" aria-label="Import AEP">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          </button>
+          <button id="aepSelectionModeBtn" class="icon-action-btn aep-icon-btn" title="Toggle delete mode" aria-label="Toggle delete mode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </div>
+        <div class="aep-modal-body" id="aepDropZone">
+          <div id="aepList" class="aep-list"></div>
+          <div class="aep-empty" id="aepEmpty">Drop .aep files here or click Import AEP</div>
+        </div>
+      </div>
+    </div>
+
     <script src="../node_modules/sweetalert2/dist/sweetalert2.all.min.js"></script>
     <script src="js/csinterface.js?v=4"></script>
-    <script src="js/app.js?v=51"></script>
+    <script src="js/app.js?v=52"></script>
   </body>
 </html>
