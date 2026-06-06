@@ -1,5 +1,6 @@
 node_modules/
 tmp/
+aep-library/
 .DS_Store
 Thumbs.db
 *.log

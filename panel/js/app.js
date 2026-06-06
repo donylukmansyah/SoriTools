@@ -3,6 +3,8 @@
 
   var STORAGE_KEY = "sori.tools.state.v1";
   var AEP_STORAGE_KEY = "sori.tools.aep.v1";
+  var STORAGE_BACKUP_KEY = "sori.tools.state.backup.v1";
+  var AEP_STORAGE_BACKUP_KEY = "sori.tools.aep.backup.v1";
   var cs = new CSInterface();
   var els = {};
   var state = { presetTree: [], selectedId: "", bulkDeleteMode: false, checkedIds: {}, searchQuery: "", searchBusy: false };
@@ -15,6 +17,8 @@
   var proxyContextClickAt = 0;
   var presetSmartShortcutAt = 0;
   var presetSmartShortcutKey = "";
+  var aepImportShortcutAt = 0;
+  var aepImportShortcutKey = "";
   var shiftHeld = false;
   var presetSearchTimer = 0;
   var presetSearchInputValue = "";
@@ -279,11 +283,11 @@
       if (Date.now() - fullMakerClickAt > 300) createLayer(resolveMakerType("solid", e.shiftKey), true);
     });
     els.precompBtn.addEventListener("click", function (e) {
-      callAe("SORI_TOOLS.precompSelected(" + (e.shiftKey ? "true" : "false") + ")", null, els.precompBtn);
+      runPrecompWithRiskCheck(e.shiftKey);
     });
     els.precompBtn.addEventListener("contextmenu", function (e) {
       e.preventDefault();
-      if (e.shiftKey) callAe("SORI_TOOLS.precompSelected(true)", null, els.precompBtn);
+      if (e.shiftKey) runPrecompWithRiskCheck(true);
     });
     els.unprecompBtn.addEventListener("click", function () {
       callAe("SORI_TOOLS.unprecompSelected()", null, els.unprecompBtn);
@@ -501,6 +505,30 @@
   function createLayer(type, full) {
     var payload = { type: type, parent: !!els.parentToLayer.checked, full: !!full };
     callAe("SORI_TOOLS.createSmartLayer(" + q(JSON.stringify(payload)) + ")");
+  }
+
+  function runPrecompWithRiskCheck(single) {
+    callAeQuiet("SORI_TOOLS.precompRiskSummary()", function (response) {
+      var risky = response && response.ok && response.data && response.data.risky ? response.data.risky : [];
+      if (!risky.length) {
+        callAe("SORI_TOOLS.precompSelected(" + (single ? "true" : "false") + ")", null, els.precompBtn);
+        return;
+      }
+      var lines = [];
+      for (var i = 0; i < risky.length && i < 6; i += 1) {
+        lines.push(esc(risky[i].name) + ": " + esc((risky[i].reasons || []).join(", ")));
+      }
+      popup({
+        title: "Risky Precomp Detected",
+        html: '<div style="text-align:left;font-size:12px;line-height:1.5"><p>These layers may change after precomp/unprecomp:</p><p>' + lines.join("<br>") + '</p><p>A debug snapshot will be written if you continue.</p></div>',
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Continue",
+        cancelButtonText: "Cancel"
+      }).then(function (result) {
+        if (result && result.isConfirmed) callAe("SORI_TOOLS.precompSelected(" + (single ? "true" : "false") + ")", null, els.precompBtn);
+      });
+    });
   }
 
   function toggleEffectControls(includeNested) {
@@ -2336,11 +2364,13 @@
         var data = JSON.parse(response || "{}");
         if (callback) callback(data);
         if (data.ok === false && data.message) {
+          logAeError(script, data.message, response);
           toast("error", data.message);
         } else if (data.ok && data.message) {
           toast("success", data.message);
         }
       } catch (error) {
+        logAeError(script, String(response || "No response from After Effects."), response);
         toast("error", String(response || "No response from After Effects."));
       }
     });
@@ -2355,22 +2385,18 @@
         data = JSON.parse(response || "{}");
       } catch (error) {
         data = { ok: false, message: String(response || "No response from After Effects.") };
+        logAeError(script, data.message, response);
       }
+      if (data && data.ok === false) logAeError(script, data.message || "AE error", response);
       if (callback) callback(data);
     });
   }
 
   function loadJsx(silent) {
-    var jsxPath = resolveJsxPath();
-    if (!jsxPath) {
-      if (!silent) toast("error", "Could not find SoriTools JSX file.");
-      return;
-    }
-
+    resolveJsxPath();
     var script = [
       "(function () {",
       "  try {",
-      "    $.evalFile(File(" + q(jsxPath) + "));",
       "    if (typeof SORI_TOOLS != 'undefined' && SORI_TOOLS.respond) return 'ok';",
       "    return 'missing';",
       "  } catch (e) {",
@@ -2383,7 +2409,7 @@
     cs.evalScript(script, function (response) {
       runtime.jsxLoaded = response === "ok";
       if (!runtime.jsxLoaded && !silent) {
-        toast("error", "Could not load SoriTools logic: " + String(response || "unknown error"));
+        toast("error", "Could not load SoriTools logic from manifest ScriptPath: " + String(response || "unknown error"));
       }
       if (runtime.jsxLoaded) syncBoostRestoreState();
     });
@@ -2420,24 +2446,39 @@
   }
 
   function wrapAeScript(script) {
-    var jsxPath = resolveJsxPath();
+    resolveJsxPath();
+    var extensionRoot = runtime.jsxPath ? runtime.jsxPath.replace(/\/panel\/jsx\/main\.jsx$/i, "") : "";
     return [
       "(function () {",
       "  function esc(value) {",
-      "    return String(value).replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\r/g, '\\\\r').replace(/\\n/g, '\\\\n');",
+      "    return String(value).split('\\\\').join('\\\\\\\\').split('\"').join('\\\\\"').replace(/\\r/g, '\\\\r').replace(/\\n/g, '\\\\n');",
       "  }",
       "  function fail(message) {",
       "    return '{\"ok\":false,\"message\":\"' + esc(message) + '\",\"data\":null}';",
       "  }",
       "  try {",
-      jsxPath ? "    $.evalFile(File(" + q(jsxPath) + "));" : "",
+      "    if (typeof SORI_TOOLS != 'undefined') SORI_TOOLS.cepExtensionRoot = " + q(extensionRoot) + ";",
+      "",
       "    if (typeof SORI_TOOLS == 'undefined') return fail('SoriTools logic is not loaded. Reopen the panel or reinstall the extension.');",
       "    var result = " + script + ";",
       "    if (typeof result == 'undefined') return '{\"ok\":true,\"message\":\"Done.\",\"data\":null}';",
       "    return result;",
       "  } catch (e) {",
       "    var line = e && e.line ? (' line ' + e.line + ': ') : '';",
-      "    return fail('After Effects error: ' + line + (e && e.message ? e.message : e));",
+      "    var file = e && e.fileName ? (' file ' + e.fileName + ':') : '';",
+      "    var message = 'After Effects error:' + file + line + (e && e.message ? e.message : e);",
+      "    try {",
+      "      var logFile = new File(Folder.userData.fsName + '/sori-tools-ae-error-log.txt');",
+      "      logFile.encoding = 'UTF-8';",
+      "      if (logFile.open('a')) {",
+      "        logFile.writeln('[' + String(new Date()) + ']');",
+      "        logFile.writeln('message=' + message);",
+      "        logFile.writeln('script=' + " + q(script) + ");",
+      "        logFile.writeln('---');",
+      "        logFile.close();",
+      "      }",
+      "    } catch (logError) {}",
+      "    return fail(message);",
       "  }",
       "})()"
     ].join("\n");
@@ -2525,6 +2566,7 @@
     if (data.comps !== undefined && data.layers !== undefined) text += " " + data.comps + " comps, " + data.layers + " layers.";
     if (data.heavyEffects) text += " " + data.heavyEffects + " heavy FX detected.";
     if (data.heavyBypassed) text += " " + data.heavyBypassed + " heavy FX bypassed.";
+    if (data.memoryPurged) text += " Memory cache purged.";
     if (data.workAreaSet) text += " Work area set.";
     return text;
   }
@@ -2648,6 +2690,30 @@
     tooltipTarget = null;
     var tip = document.getElementById("soriTooltip");
     if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+  }
+
+  function logAeError(script, message, response) {
+    try {
+      var entry = [
+        "[" + new Date().toISOString() + "]",
+        "host=" + (runtime.hostVersion || "unknown"),
+        "script=" + String(script || ""),
+        "message=" + String(message || ""),
+        "response=" + String(response || "")
+      ].join("\n") + "\n---\n";
+      if (window.console && console.error) console.error(entry);
+      if (typeof require === "function") {
+        var fs = require("fs");
+        var path = require("path");
+        var base = "";
+        try { base = cs.getSystemPath("extension") || ""; } catch (e) {}
+        if (base) {
+          var dir = path.join(base, "tmp");
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+          fs.appendFileSync(path.join(dir, "ae-error-log.txt"), entry, "utf8");
+        }
+      }
+    } catch (error) {}
   }
 
   function pulse(active) {
@@ -2958,8 +3024,8 @@
     closeAepContextMenu();
     closeAepLibraryModal(function () {
       popup({
-        title: "Delete AEP?",
-        text: "This will delete " + checkedIds.length + " item(s) permanently.",
+          title: "Delete AEP?",
+          text: "This will delete " + checkedIds.length + " item(s) permanently.",
         icon: "warning",
         showCancelButton: true,
         confirmButtonText: "Delete",
@@ -3029,7 +3095,7 @@
     callAe("SORI_TOOLS.importAepFile()", function (data) {
       if (data && data.ok && data.data) {
         addAepItem(data.data);
-        closeAepLibraryModal();
+        openAepLibraryModal();
       }
     }, els.aepImportBtn);
   }
@@ -3040,7 +3106,7 @@
         for (var n = 0; n < data.data.length; n += 1) {
           addAepItem(data.data[n]);
         }
-        closeAepLibraryModal();
+        openAepLibraryModal();
       }
     });
   }
@@ -3285,18 +3351,19 @@
     return null;
   }
 
+  function shouldSkipAepImport(path, mode) {
+    var key = String(path || "") + "|" + String(mode || "");
+    var now = Date.now();
+    if (key === aepImportShortcutKey && now - aepImportShortcutAt < 1200) return true;
+    aepImportShortcutKey = key;
+    aepImportShortcutAt = now;
+    return false;
+  }
+
   function importAllAepComps(item) {
-    callAeQuiet("SORI_TOOLS.listAepComps(" + q(item.path) + ")", function (data) {
-      if (!data || !data.ok || !data.data || !data.data.length) return;
-      var comps = data.data;
-      var selectedNames = [];
-      for (var i = 0; i < comps.length; i += 1) {
-        selectedNames.push(comps[i].name);
-      }
-      var payload = { path: item.path, compNames: selectedNames };
-      callAeQuiet("SORI_TOOLS.importAepComps(" + q(JSON.stringify(payload)) + ")", function () {
-        closeAepLibraryModal();
-      });
+    if (shouldSkipAepImport(item.path, "all")) return;
+    callAeQuiet("SORI_TOOLS.importAepProject(" + q(JSON.stringify({ path: item.path })) + ")", function () {
+      closeAepLibraryModal();
     });
   }
 
@@ -3313,8 +3380,8 @@
       var html = '<div class="aep-comp-picker">';
       for (var i = 0; i < comps.length; i += 1) {
         var c = comps[i];
-        html += '<label title="' + esc(c.name) + '"><input type="checkbox" value="' + esc(c.name) + '" checked>' +
-          '<span>' + esc(c.name) + '</span>' +
+        html += '<label title="' + esc(c.name) + '"><input type="checkbox" value="' + esc(c.name) + '"' + (c.main === false ? '' : ' checked') + '>' +
+          '<span>' + esc(c.name) + (c.main === false ? ' <small>(precomp)</small>' : ' <small>(main)</small>') + '</span>' +
           '<span class="aep-comp-info">' + c.width + 'x' + c.height + ' · ' + Math.round(c.duration * 100) / 100 + 's</span>' +
           '</label>';
       }
@@ -3342,11 +3409,14 @@
         } catch (e) {}
 
         if (!selectedNames.length) {
-          for (var k = 0; k < comps.length; k += 1) selectedNames.push(comps[k].name);
+          toast("warning", "Select at least one comp.");
+          return;
         }
 
         var payload = { path: item.path, compNames: selectedNames };
-        callAeQuiet("SORI_TOOLS.importAepComps(" + q(JSON.stringify(payload)) + ")", function () {
+        if (shouldSkipAepImport(item.path, "selected:" + selectedNames.join("|"))) return;
+        callAeQuiet("SORI_TOOLS.importAepComps(" + q(JSON.stringify(payload)) + ")", function (response) {
+          storeAepLastImport(item, response);
           closeAepLibraryModal();
         });
       });
@@ -3358,8 +3428,8 @@
     closeAepContextMenu();
     closeAepLibraryModal(function () {
       popup({
-        title: "Delete AEP?",
-        text: item.name + " and all collected footage will be permanently deleted.",
+          title: "Delete AEP?",
+          text: item.name + " and all collected footage will be permanently deleted.",
         icon: "warning",
         showCancelButton: true,
         confirmButtonText: "Delete",
@@ -3446,11 +3516,14 @@
 
   function saveAepState() {
     try {
+      var existing = localStorage.getItem(AEP_STORAGE_KEY);
+      if (existing) localStorage.setItem(AEP_STORAGE_BACKUP_KEY, existing);
       localStorage.setItem(AEP_STORAGE_KEY, JSON.stringify({
         items: aepState.items,
         selectedId: aepState.selectedId,
         selectionMode: aepState.selectionMode === true,
-        checkedIds: aepState.checkedIds
+        checkedIds: aepState.checkedIds,
+        backedUpAt: new Date().toISOString()
       }));
     } catch (error) {}
   }
@@ -3488,10 +3561,13 @@
 
   function saveState() {
     try {
+      var existing = localStorage.getItem(STORAGE_KEY);
+      if (existing) localStorage.setItem(STORAGE_BACKUP_KEY, existing);
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         presetTree: state.presetTree,
         selectedId: state.selectedId,
-        boostProfile: boostRun.profile
+        boostProfile: boostRun.profile,
+        backedUpAt: new Date().toISOString()
       }));
     } catch (error) {}
   }

@@ -11,20 +11,37 @@ SORI_TOOLS.effectControlRestoreStateLoaded = SORI_TOOLS.effectControlRestoreStat
 
 SORI_TOOLS.getExtensionRoot = function () {
   try {
+    if (SORI_TOOLS.cepExtensionRoot) return String(SORI_TOOLS.cepExtensionRoot).replace(/\\/g, "/");
+  } catch (e0) {}
+  try {
     var scriptFile = new File($.fileName);
-    return scriptFile.parent.parent.parent.fsName;
+    var root = scriptFile.parent.parent.parent.fsName;
+    var rootText = String(root || "").replace(/\\/g, "/").toLowerCase();
+    if (root && rootText.indexOf("/adobe") < 0) return root;
   } catch (e) {}
   return "";
 };
 
 SORI_TOOLS.tmpFolder = function () {
+  var candidates = [];
+  try {
+    if (Folder.temp) candidates.push(new Folder(Folder.temp.fsName + "/sori-tools"));
+  } catch (e) {}
+  try {
+    if (Folder.userData) candidates.push(new Folder(Folder.userData.fsName + "/sori-tools"));
+  } catch (e2) {}
   try {
     var root = SORI_TOOLS.getExtensionRoot();
-    if (!root) return null;
-    var folder = new Folder(root + "/tmp");
-    if (!folder.exists) folder.create();
-    return folder;
-  } catch (e) {}
+    if (root) candidates.push(new Folder(root + "/tmp"));
+  } catch (e3) {}
+  for (var i = 0; i < candidates.length; i += 1) {
+    try {
+      var folder = candidates[i];
+      if (!folder) continue;
+      if (!folder.exists) folder.create();
+      return folder;
+    } catch (e4) {}
+  }
   return null;
 };
 
@@ -38,28 +55,34 @@ SORI_TOOLS.tmpFile = function (name) {
 };
 
 SORI_TOOLS.readTextFile = function (name) {
+  var file = null;
   try {
-    var file = SORI_TOOLS.tmpFile(name);
+    file = SORI_TOOLS.tmpFile(name);
     if (!file || !file.exists) return "";
     file.encoding = "UTF-8";
     if (!file.open("r")) return "";
     var text = file.read();
-    file.close();
+    try { file.close(); } catch (closeError) {}
     return text;
-  } catch (e) {}
+  } catch (e) {
+    try { if (file) file.close(); } catch (closeError2) {}
+  }
   return "";
 };
 
 SORI_TOOLS.writeTextFile = function (name, text) {
+  var file = null;
   try {
-    var file = SORI_TOOLS.tmpFile(name);
+    file = SORI_TOOLS.tmpFile(name);
     if (!file) return false;
     file.encoding = "UTF-8";
     if (!file.open("w")) return false;
     file.write(String(text || ""));
-    file.close();
+    try { file.close(); } catch (closeError) {}
     return true;
-  } catch (e) {}
+  } catch (e) {
+    try { if (file) file.close(); } catch (closeError2) {}
+  }
   return false;
 };
 
@@ -78,7 +101,6 @@ SORI_TOOLS.writeDebugFile = function (name, data) {
 };
 
 SORI_TOOLS.stringify = function (value) {
-  if (typeof JSON !== "undefined" && JSON.stringify) return JSON.stringify(value);
   if (value === null || value === undefined) return "null";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return isFinite(value) ? String(value) : "null";
@@ -90,7 +112,10 @@ SORI_TOOLS.stringify = function (value) {
       .replace(/\r/g, "\\r")
       .replace(/\t/g, "\\t") + '"';
   }
-  if (value instanceof Array) {
+  var isArray = false;
+  try { isArray = value instanceof Array; } catch (eArray) {}
+  try { if (!isArray && Object.prototype.toString.call(value) === "[object Array]") isArray = true; } catch (eArray2) {}
+  if (isArray) {
     var arr = [];
     for (var i = 0; i < value.length; i += 1) arr.push(SORI_TOOLS.stringify(value[i]));
     return "[" + arr.join(",") + "]";
@@ -98,13 +123,13 @@ SORI_TOOLS.stringify = function (value) {
   if (typeof value === "object") {
     var parts = [];
     for (var k in value) {
-      if (value.hasOwnProperty(k)) {
-        parts.push(SORI_TOOLS.stringify(String(k)) + ':' + SORI_TOOLS.stringify(value[k]));
-      }
+      try {
+        if (value.hasOwnProperty && value.hasOwnProperty(k)) parts.push(SORI_TOOLS.stringify(String(k)) + ':' + SORI_TOOLS.stringify(value[k]));
+      } catch (e) {}
     }
     return "{" + parts.join(",") + "}";
   }
-  return String(value);
+  return "null";
 };
 
 SORI_TOOLS.parse = function (value) {
@@ -1131,6 +1156,27 @@ SORI_TOOLS.addPrecompRiskDebug = function (debug, layers) {
   }
 };
 
+SORI_TOOLS.precompRiskSummary = function () {
+  var comp = SORI_TOOLS.comp();
+  if (!comp) return SORI_TOOLS.respond(false, "No active composition.");
+  var layers = SORI_TOOLS.selectedLayers(comp);
+  if (!layers.length) return SORI_TOOLS.respond(false, "Select at least one layer.");
+  var risky = [];
+  for (var i = 0; i < layers.length; i += 1) {
+    try {
+      var layer = layers[i];
+      var reasons = [];
+      if (SORI_TOOLS.scanRiskyExpressions(layer).length) reasons.push("expression refs time/layer/comp");
+      if (layer.parent) reasons.push("parented");
+      if (SORI_TOOLS.hasTimeRemap(layer)) reasons.push("time remap");
+      if (SORI_TOOLS.hasReverseStretch(layer)) reasons.push("reverse stretch");
+      if (SORI_TOOLS.layerHasRiskyKeyedEffects(layer)) reasons.push("third-party keyed/effect expression");
+      if (reasons.length) risky.push({ name: String(layer.name || ("Layer " + layer.index)), reasons: reasons });
+    } catch (e) {}
+  }
+  return SORI_TOOLS.respond(true, "", { risky: risky, count: risky.length });
+};
+
 SORI_TOOLS.addMakerLayer = function (comp, type, duration) {
   var dur = Math.max(comp.frameDuration, duration || comp.duration || comp.frameDuration);
   var layer = null;
@@ -1236,6 +1282,7 @@ SORI_TOOLS.precompSelected = function (single) {
   var comp = SORI_TOOLS.comp();
   if (!comp) return SORI_TOOLS.respond(false, "No active composition.");
   var layers = SORI_TOOLS.selectedLayers(comp);
+  var boostState = SORI_TOOLS.activeBoostState();
   if (!layers.length) return SORI_TOOLS.respond(false, "Select at least one layer.");
   var precompDebug = {
     version: SORI_TOOLS.UNPRECOMP_DEBUG_VERSION,
@@ -1255,10 +1302,21 @@ SORI_TOOLS.precompSelected = function (single) {
   try {
     if (single) {
       var indices = [];
-      for (var i = 0; i < layers.length; i += 1) indices.push(layers[i].index);
+      var groupLayerStates = [];
+      var groupItems = [];
+      for (var i = 0; i < layers.length; i += 1) {
+        groupItems.push({
+          index: layers[i].index,
+          state: SORI_TOOLS.mergeBoostLayerState(boostState, comp, layers[i], SORI_TOOLS.collectLayerState(layers[i]))
+        });
+      }
       var span = SORI_TOOLS.span(layers);
 
-      indices.sort(function (a, b) { return a - b; });
+      groupItems.sort(function (a, b) { return a.index - b.index; });
+      for (var gi = 0; gi < groupItems.length; gi += 1) {
+        indices.push(groupItems[gi].index);
+        groupLayerStates.push(groupItems[gi].state);
+      }
       var groupSnap = {
         inPoint: span.start,
         outPoint: span.end,
@@ -1268,6 +1326,16 @@ SORI_TOOLS.precompSelected = function (single) {
       var groupName = SORI_TOOLS.uniqueProjectItemName(SORI_TOOLS.cleanName(groupSnap.name) + "_precomp");
       var groupComp = comp.layers.precompose(indices, groupName, true);
       var groupLayer = SORI_TOOLS.findLayerBySource(comp, groupComp);
+      if (groupLayer && groupLayerStates.length === 1) SORI_TOOLS.restoreLayerState(groupLayer, groupLayerStates[0]);
+      try {
+        for (var g = 0; g < groupLayerStates.length && g < groupComp.numLayers; g += 1) {
+          SORI_TOOLS.restoreLayerState(groupComp.layer(g + 1), groupLayerStates[g]);
+        }
+      } catch (egroupRestore) {}
+      if (boostState) {
+        SORI_TOOLS.registerBoostPrecompState(boostState, comp, groupComp, groupLayerStates, groupLayer, groupLayerStates.length === 1 ? groupLayerStates[0] : null);
+        SORI_TOOLS.applyBoostRules([groupComp], SORI_TOOLS.boostProfileSettings(boostState.profile || "strong"), boostState);
+      }
       SORI_TOOLS.adjustPrecompLayerToSpan(groupComp, groupLayer, groupSnap, comp);
       SORI_TOOLS.promoteSingleAdjustmentPrecomp(groupComp, groupLayer, groupSnap, precompDebug);
       precompDebug.events.push(SORI_TOOLS.debugPrecompState(groupLayer, groupComp, groupSnap));
@@ -1285,7 +1353,7 @@ SORI_TOOLS.precompSelected = function (single) {
           outPoint: Math.max(layerIn, layerOut),
           startTime: layers[s].startTime,
           label: layers[s].label,
-          state: SORI_TOOLS.collectLayerState(layers[s])
+          state: SORI_TOOLS.mergeBoostLayerState(boostState, comp, layers[s], SORI_TOOLS.collectLayerState(layers[s]))
         });
       }
 
@@ -1298,6 +1366,11 @@ SORI_TOOLS.precompSelected = function (single) {
           var pc = comp.layers.precompose([currentLayer.index], pcName, true);
           var pcLayer = SORI_TOOLS.findLayerBySource(comp, pc);
           if (pcLayer && snap.state) SORI_TOOLS.restoreLayerState(pcLayer, snap.state);
+          SORI_TOOLS.restorePrecompInnerLayerState(pc, snap.state);
+          if (boostState) {
+            SORI_TOOLS.registerBoostPrecompState(boostState, comp, pc, [snap.state], pcLayer, snap.state);
+            SORI_TOOLS.applyBoostRules([pc], SORI_TOOLS.boostProfileSettings(boostState.profile || "strong"), boostState);
+          }
           SORI_TOOLS.adjustPrecompLayerToSpan(pc, pcLayer, snap, comp);
           SORI_TOOLS.promoteSingleAdjustmentPrecomp(pc, pcLayer, snap, precompDebug);
           precompDebug.events.push(SORI_TOOLS.debugPrecompState(pcLayer, pc, snap));
@@ -1367,6 +1440,96 @@ SORI_TOOLS.restoreLayerState = function (layer, state) {
   try { if (state.adjustmentLayer !== undefined) layer.adjustmentLayer = state.adjustmentLayer; } catch (e14) {}
   try { if (state.threeDLayer !== undefined) layer.threeDLayer = state.threeDLayer; } catch (e15) {}
   try { if (state.trackMatteType !== undefined) layer.trackMatteType = state.trackMatteType; } catch (e16t) {}
+};
+
+SORI_TOOLS.activeBoostState = function () {
+  var state = SORI_TOOLS.parse(SORI_TOOLS.readBoostRestoreStateText());
+  if (state && state.projectKey === SORI_TOOLS.projectStateKey() && state.comps && state.layers) return state;
+  return null;
+};
+
+SORI_TOOLS.findBoostCompStateForComp = function (state, comp) {
+  if (!state || !state.comps || !comp) return null;
+  var key = SORI_TOOLS.compStateKey(comp);
+  for (var i = 0; i < state.comps.length; i += 1) {
+    if (state.comps[i] && state.comps[i].key === key) return state.comps[i];
+  }
+  return null;
+};
+
+SORI_TOOLS.findBoostLayerStateForLayer = function (state, comp, layer) {
+  if (!state || !state.layers || !comp || !layer) return null;
+  var key = SORI_TOOLS.effectStateKey(comp, layer);
+  for (var i = 0; i < state.layers.length; i += 1) {
+    if (state.layers[i] && state.layers[i].key === key) return state.layers[i];
+  }
+  return null;
+};
+
+SORI_TOOLS.mergeBoostLayerState = function (state, comp, layer, layerState) {
+  var boostLayerState = SORI_TOOLS.findBoostLayerStateForLayer(state, comp, layer);
+  if (!boostLayerState || !layerState) return layerState;
+  var settings = SORI_TOOLS.boostProfileSettings(state.profile || "strong");
+  try {
+    if (boostLayerState.motionBlur !== undefined && settings.disableMotion && layer.motionBlur === false) layerState.motionBlur = boostLayerState.motionBlur;
+  } catch (e) {}
+  try {
+    if (boostLayerState.frameBlendingType !== undefined && settings.disableMotion && layer.frameBlendingType === FrameBlendingType.NO_FRAME_BLEND) layerState.frameBlendingType = boostLayerState.frameBlendingType;
+  } catch (e2) {}
+  try {
+    if (boostLayerState.quality !== undefined && settings.draftLayers && layer.quality === LayerQuality.DRAFT) layerState.quality = boostLayerState.quality;
+  } catch (e3) {}
+  try {
+    if (boostLayerState.samplingQuality !== undefined && settings.bilinear && layer.samplingQuality === LayerSamplingQuality.BILINEAR) layerState.samplingQuality = boostLayerState.samplingQuality;
+  } catch (e4) {}
+  return layerState;
+};
+
+SORI_TOOLS.restorePrecompInnerLayerState = function (precomp, state) {
+  if (!precomp || !state) return false;
+  try {
+    if (precomp.numLayers < 1) return false;
+    SORI_TOOLS.restoreLayerState(precomp.layer(1), state);
+    return true;
+  } catch (e) {}
+  return false;
+};
+
+SORI_TOOLS.registerBoostPrecompState = function (boostState, sourceComp, precomp, layerStates, parentLayer, parentState) {
+  if (!boostState || !sourceComp || !precomp || !layerStates) return false;
+  try {
+    if (!boostState.comps) boostState.comps = [];
+    if (!boostState.layers) boostState.layers = [];
+    var compState = SORI_TOOLS.captureBoostCompState(precomp);
+    var sourceCompState = SORI_TOOLS.findBoostCompStateForComp(boostState, sourceComp);
+    try { if (sourceCompState && sourceCompState.resolutionFactor !== undefined) compState.resolutionFactor = sourceCompState.resolutionFactor; } catch (e) {}
+    try { if (sourceCompState && sourceCompState.draft3d !== undefined) compState.draft3d = sourceCompState.draft3d; } catch (e2) {}
+    try { if (sourceCompState && sourceCompState.motionBlur !== undefined) compState.motionBlur = sourceCompState.motionBlur; } catch (e3) {}
+    try { if (sourceCompState && sourceCompState.frameBlending !== undefined) compState.frameBlending = sourceCompState.frameBlending; } catch (e4) {}
+    if (!SORI_TOOLS.findBoostCompStateForComp(boostState, precomp)) boostState.comps.push(compState);
+    for (var i = 0; i < layerStates.length && i < precomp.numLayers; i += 1) {
+      var layerState = layerStates[i];
+      if (!layerState) continue;
+      var innerLayer = precomp.layer(i + 1);
+      var nextState = SORI_TOOLS.captureBoostLayerState(precomp, innerLayer);
+      try { if (layerState.quality !== undefined) nextState.quality = layerState.quality; } catch (lq) {}
+      try { if (layerState.samplingQuality !== undefined) nextState.samplingQuality = layerState.samplingQuality; } catch (ls) {}
+      try { if (layerState.motionBlur !== undefined) nextState.motionBlur = layerState.motionBlur; } catch (lm) {}
+      try { if (layerState.frameBlendingType !== undefined) nextState.frameBlendingType = layerState.frameBlendingType; } catch (lf) {}
+      if (!SORI_TOOLS.findBoostLayerStateForLayer(boostState, precomp, innerLayer)) boostState.layers.push(nextState);
+    }
+    if (parentLayer && parentState && !SORI_TOOLS.findBoostLayerStateForLayer(boostState, sourceComp, parentLayer)) {
+      var parentBoostState = SORI_TOOLS.captureBoostLayerState(sourceComp, parentLayer);
+      try { if (parentState.quality !== undefined) parentBoostState.quality = parentState.quality; } catch (pq) {}
+      try { if (parentState.samplingQuality !== undefined) parentBoostState.samplingQuality = parentState.samplingQuality; } catch (ps) {}
+      try { if (parentState.motionBlur !== undefined) parentBoostState.motionBlur = parentState.motionBlur; } catch (pm) {}
+      try { if (parentState.frameBlendingType !== undefined) parentBoostState.frameBlendingType = parentState.frameBlendingType; } catch (pf) {}
+      boostState.layers.push(parentBoostState);
+    }
+    SORI_TOOLS.writeBoostRestoreStateText(SORI_TOOLS.stringify(boostState));
+    return true;
+  } catch (e5) {}
+  return false;
 };
 
 SORI_TOOLS.propertyTreeHasKeys = function (prop) {
@@ -3413,6 +3576,14 @@ SORI_TOOLS.boostRestoreFileName = function () {
   return "boost-restore-state.json";
 };
 
+SORI_TOOLS.readBoostRestoreStateText = function () {
+  return SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName());
+};
+
+SORI_TOOLS.writeBoostRestoreStateText = function (text) {
+  return SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), text);
+};
+
 SORI_TOOLS.collectBoostComps = function (rootComp) {
   var comps = [];
   var seen = {};
@@ -3685,44 +3856,20 @@ SORI_TOOLS.detectHeavyBoostEffects = function (comps) {
 
 SORI_TOOLS.applyBoostSystemSettings = function (state, settings) {
   try {
-    if (app.project && app.project.gpuAccelType !== undefined && state.projectGpuAccelType === undefined) {
-      state.projectGpuAccelType = app.project.gpuAccelType;
-    }
-  } catch (e) {}
-
-  try {
-    if (app.availableGPUAccelTypes && app.project && app.project.gpuAccelType !== undefined && typeof GpuAccelType !== "undefined") {
-      for (var i = 0; i < app.availableGPUAccelTypes.length; i += 1) {
-        if (app.availableGPUAccelTypes[i] === GpuAccelType.CUDA) {
-          app.project.gpuAccelType = GpuAccelType.CUDA;
-          state.cudaApplied = true;
-          break;
-        }
+    if ((!settings || settings.purge !== false) && typeof PurgeTarget !== "undefined" && app && app.purge) {
+      var purgeTarget = null;
+      if (PurgeTarget.ALL_MEMORY_CACHES !== undefined) purgeTarget = PurgeTarget.ALL_MEMORY_CACHES;
+      if (purgeTarget === null && PurgeTarget.IMAGE_CACHES !== undefined) purgeTarget = PurgeTarget.IMAGE_CACHES;
+      if (purgeTarget !== null) {
+        app.purge(purgeTarget);
+        state.memoryPurged = true;
       }
     }
-  } catch (e2) {}
-
-  try {
-    if (settings && settings.tuneMemory === true && app.setMemoryUsageLimits) {
-      app.setMemoryUsageLimits(70, 85);
-      state.memoryTuned = true;
-    }
-  } catch (e3) {}
-
-  try {
-    if ((!settings || settings.purge !== false) && typeof PurgeTarget !== "undefined" && PurgeTarget.ALL_MEMORY_CACHES !== undefined) {
-      app.purge(PurgeTarget.ALL_MEMORY_CACHES);
-      state.memoryPurged = true;
-    }
-  } catch (e4) {}
+  } catch (e) {}
 };
 
 SORI_TOOLS.restoreBoostSystemSettings = function (state) {
-  try {
-    if (state && state.projectGpuAccelType !== undefined && app.project && app.project.gpuAccelType !== undefined) {
-      app.project.gpuAccelType = state.projectGpuAccelType;
-    }
-  } catch (e) {}
+  return true;
 };
 
 SORI_TOOLS.applyBoostRules = function (comps, settings, state) {
@@ -3732,18 +3879,21 @@ SORI_TOOLS.applyBoostRules = function (comps, settings, state) {
   var heavyBypassed = 0;
   for (var i = 0; i < comps.length; i += 1) {
     var comp = comps[i];
-    try { comp.resolutionFactor = opts.resolutionFactor; } catch (e) {}
-    try { comp.draft3d = opts.draft3d === true; } catch (e2) {}
-    try { if (opts.disableMotion) comp.motionBlur = false; } catch (e3) {}
-    try { if (opts.disableMotion) comp.frameBlending = false; } catch (e4) {}
+    try {
+      var resolutionFactor = comp.resolutionFactor;
+      if (resolutionFactor[0] !== opts.resolutionFactor[0] || resolutionFactor[1] !== opts.resolutionFactor[1]) comp.resolutionFactor = opts.resolutionFactor;
+    } catch (e) {}
+    try { if (comp.draft3d !== (opts.draft3d === true)) comp.draft3d = opts.draft3d === true; } catch (e2) {}
+    try { if (opts.disableMotion && comp.motionBlur !== false) comp.motionBlur = false; } catch (e3) {}
+    try { if (opts.disableMotion && comp.frameBlending !== false) comp.frameBlending = false; } catch (e4) {}
     compCount += 1;
     try {
       for (var j = 1; j <= comp.numLayers; j += 1) {
         var layer = comp.layer(j);
-        try { if (opts.draftLayers) layer.quality = LayerQuality.DRAFT; } catch (lq) {}
-        try { if (opts.bilinear) layer.samplingQuality = LayerSamplingQuality.BILINEAR; } catch (ls) {}
-        try { if (opts.disableMotion) layer.motionBlur = false; } catch (lm) {}
-        try { if (opts.disableMotion) layer.frameBlendingType = FrameBlendingType.NO_FRAME_BLEND; } catch (lf) {}
+        try { if (opts.draftLayers && layer.quality !== LayerQuality.DRAFT) layer.quality = LayerQuality.DRAFT; } catch (lq) {}
+        try { if (opts.bilinear && layer.samplingQuality !== LayerSamplingQuality.BILINEAR) layer.samplingQuality = LayerSamplingQuality.BILINEAR; } catch (ls) {}
+        try { if (opts.disableMotion && layer.motionBlur !== false) layer.motionBlur = false; } catch (lm) {}
+        try { if (opts.disableMotion && layer.frameBlendingType !== FrameBlendingType.NO_FRAME_BLEND) layer.frameBlendingType = FrameBlendingType.NO_FRAME_BLEND; } catch (lf) {}
         layerCount += 1;
       }
     } catch (elayers) {}
@@ -3779,22 +3929,67 @@ SORI_TOOLS.updateBoostStateFromCurrent = function (state, settings) {
   }
 };
 
+SORI_TOOLS.syncBoostStateFromComps = function (state, comps, settings) {
+  if (!state || !comps) return false;
+  if (!state.comps) state.comps = [];
+  if (!state.layers) state.layers = [];
+  var opts = settings || SORI_TOOLS.boostProfileSettings(state.profile || "strong");
+  var changed = false;
+  for (var i = 0; i < comps.length; i += 1) {
+    var comp = comps[i];
+    if (!comp) continue;
+    var compState = SORI_TOOLS.findBoostCompStateForComp(state, comp);
+    if (!compState) {
+      compState = SORI_TOOLS.captureBoostCompState(comp);
+      state.comps.push(compState);
+      changed = true;
+    }
+    try { if (opts.disableMotion && comp.motionBlur !== false && compState.motionBlur !== comp.motionBlur) { compState.motionBlur = comp.motionBlur; changed = true; } } catch (e) {}
+    try { if (opts.disableMotion && comp.frameBlending !== false && compState.frameBlending !== comp.frameBlending) { compState.frameBlending = comp.frameBlending; changed = true; } } catch (e2) {}
+    try {
+      var rf = comp.resolutionFactor;
+      if ((rf[0] !== opts.resolutionFactor[0] || rf[1] !== opts.resolutionFactor[1]) && (!compState.resolutionFactor || compState.resolutionFactor[0] !== rf[0] || compState.resolutionFactor[1] !== rf[1])) {
+        compState.resolutionFactor = rf;
+        changed = true;
+      }
+    } catch (e3) {}
+    try { if (comp.draft3d !== (opts.draft3d === true) && compState.draft3d !== comp.draft3d) { compState.draft3d = comp.draft3d; changed = true; } } catch (e4) {}
+    try {
+      for (var j = 1; j <= comp.numLayers; j += 1) {
+        var layer = comp.layer(j);
+        var layerState = SORI_TOOLS.findBoostLayerStateForLayer(state, comp, layer);
+        if (!layerState) {
+          state.layers.push(SORI_TOOLS.captureBoostLayerState(comp, layer));
+          changed = true;
+          continue;
+        }
+        try { if (opts.draftLayers && layer.quality !== LayerQuality.DRAFT && layerState.quality !== layer.quality) { layerState.quality = layer.quality; changed = true; } } catch (lq) {}
+        try { if (opts.bilinear && layer.samplingQuality !== LayerSamplingQuality.BILINEAR && layerState.samplingQuality !== layer.samplingQuality) { layerState.samplingQuality = layer.samplingQuality; changed = true; } } catch (ls) {}
+        try { if (opts.disableMotion && layer.motionBlur !== false && layerState.motionBlur !== layer.motionBlur) { layerState.motionBlur = layer.motionBlur; changed = true; } } catch (lm) {}
+        try { if (opts.disableMotion && layer.frameBlendingType !== FrameBlendingType.NO_FRAME_BLEND && layerState.frameBlendingType !== layer.frameBlendingType) { layerState.frameBlendingType = layer.frameBlendingType; changed = true; } } catch (lf) {}
+      }
+    } catch (elayers) {}
+  }
+  return changed;
+};
+
 SORI_TOOLS.refreshBoostMode = function () {
   var rootComp = SORI_TOOLS.comp();
   if (!rootComp) return SORI_TOOLS.respond(false, "No active composition.");
-  var state = SORI_TOOLS.parse(SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName()));
+  var state = SORI_TOOLS.parse(SORI_TOOLS.readBoostRestoreStateText());
   if (!state || state.projectKey !== SORI_TOOLS.projectStateKey()) return SORI_TOOLS.respond(false, "Boost is not active for this project.");
   var comps = SORI_TOOLS.collectBoostComps(rootComp);
   var settings = SORI_TOOLS.boostProfileSettings(state.profile || "strong");
   var undoOpen = false;
   try {
     SORI_TOOLS.updateBoostStateFromCurrent(state, settings);
+    SORI_TOOLS.syncBoostStateFromComps(state, comps, settings);
     app.beginUndoGroup("SoriTools Boost Refresh");
     undoOpen = true;
     if (settings.bypassHeavyFx) SORI_TOOLS.captureHeavyFxState(comps, state);
     var result = SORI_TOOLS.applyBoostRules(comps, settings, state);
-    result.heavyEffects = SORI_TOOLS.detectHeavyBoostEffects(comps).length;
-    SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), SORI_TOOLS.stringify(state));
+    result.heavyEffects = state && state.heavyEffects ? state.heavyEffects.length : 0;
+    SORI_TOOLS.writeBoostRestoreStateText(SORI_TOOLS.stringify(state));
     return SORI_TOOLS.respond(true, "", result);
   } catch (e) {
     return SORI_TOOLS.respond(false, "Boost refresh failed: " + e.message);
@@ -3844,9 +4039,9 @@ SORI_TOOLS.captureBoostState = function (comps, cacheInfo, heavyEffects, existin
 
 SORI_TOOLS.boostProfileSettings = function (profile) {
   var name = String(profile || "strong").toLowerCase();
-  if (name === "safe") return { name: "safe", resolutionFactor: [2, 2], draft3d: true, draftLayers: false, bilinear: true, disableMotion: true, selectedWorkArea: false, purge: false, tuneMemory: false, bypassHeavyFx: false };
-  if (name === "max") return { name: "max", resolutionFactor: [4, 4], draft3d: true, draftLayers: true, bilinear: true, disableMotion: true, selectedWorkArea: true, purge: true, tuneMemory: true, bypassHeavyFx: true };
-  return { name: "strong", resolutionFactor: [4, 4], draft3d: true, draftLayers: true, bilinear: true, disableMotion: true, selectedWorkArea: false, purge: true, tuneMemory: false, bypassHeavyFx: false };
+  if (name === "safe") return { name: "safe", resolutionFactor: [2, 2], draft3d: true, draftLayers: false, bilinear: true, disableMotion: true, selectedWorkArea: false, purge: false, bypassHeavyFx: false };
+  if (name === "max") return { name: "max", resolutionFactor: [4, 4], draft3d: true, draftLayers: true, bilinear: true, disableMotion: true, selectedWorkArea: true, purge: true, bypassHeavyFx: true };
+  return { name: "strong", resolutionFactor: [4, 4], draft3d: true, draftLayers: true, bilinear: true, disableMotion: true, selectedWorkArea: false, purge: true, bypassHeavyFx: false };
 };
 
 SORI_TOOLS.applyBoostWorkAreaFromSelection = function (comp) {
@@ -3880,7 +4075,7 @@ SORI_TOOLS.applyBoostMode = function (profile, selectedWorkAreaOverride) {
   var comps = SORI_TOOLS.collectBoostComps(rootComp);
   var cacheInfo = SORI_TOOLS.enforceBoostCacheLimit();
   var heavyEffects = SORI_TOOLS.detectHeavyBoostEffects(comps);
-  var existingState = SORI_TOOLS.parse(SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName()));
+  var existingState = SORI_TOOLS.parse(SORI_TOOLS.readBoostRestoreStateText());
   if (existingState && existingState.projectKey === SORI_TOOLS.projectStateKey()) SORI_TOOLS.updateBoostStateFromCurrent(existingState, settings);
   var captured = SORI_TOOLS.captureBoostState(comps, cacheInfo, heavyEffects, existingState);
   var state = captured.state;
@@ -3893,7 +4088,7 @@ SORI_TOOLS.applyBoostMode = function (profile, selectedWorkAreaOverride) {
   state.profile = settings.name;
   if (settings.bypassHeavyFx) SORI_TOOLS.captureHeavyFxState(comps, state);
   SORI_TOOLS.applyBoostSystemSettings(state, settings);
-  if (!SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), SORI_TOOLS.stringify(state))) {
+  if (!SORI_TOOLS.writeBoostRestoreStateText(SORI_TOOLS.stringify(state))) {
     return SORI_TOOLS.respond(false, "Boost could not save restore state. Check extension tmp folder permissions.");
   }
 
@@ -3901,26 +4096,10 @@ SORI_TOOLS.applyBoostMode = function (profile, selectedWorkAreaOverride) {
     app.beginUndoGroup("SoriTools Boost On");
     undoOpen = true;
     if (selectedWorkAreaOverride === true) workAreaSet = SORI_TOOLS.applyBoostWorkAreaFromSelection(rootComp);
-    if (settings.bypassHeavyFx) heavyBypassed = SORI_TOOLS.applyHeavyFxBypass(comps, state, false);
-    for (var i = 0; i < comps.length; i += 1) {
-      var comp = comps[i];
-      try { comp.resolutionFactor = settings.resolutionFactor; } catch (e) {}
-      try { comp.draft3d = settings.draft3d === true; } catch (e2) {}
-      try { if (settings.disableMotion) comp.motionBlur = false; } catch (e3) {}
-      try { if (settings.disableMotion) comp.frameBlending = false; } catch (e4) {}
-      compCount += 1;
-
-      try {
-        for (var j = 1; j <= comp.numLayers; j += 1) {
-          var layer = comp.layer(j);
-          try { if (settings.draftLayers) layer.quality = LayerQuality.DRAFT; } catch (lq) {}
-          try { if (settings.bilinear) layer.samplingQuality = LayerSamplingQuality.BILINEAR; } catch (ls) {}
-          try { if (settings.disableMotion) layer.motionBlur = false; } catch (lm) {}
-          try { if (settings.disableMotion) layer.frameBlendingType = FrameBlendingType.NO_FRAME_BLEND; } catch (lf) {}
-          layerCount += 1;
-        }
-      } catch (elayers) {}
-    }
+    var boostResult = SORI_TOOLS.applyBoostRules(comps, settings, state);
+    compCount = boostResult.comps;
+    layerCount = boostResult.layers;
+    heavyBypassed = boostResult.heavyBypassed;
   } catch (applyError) {
     return SORI_TOOLS.respond(false, "Boost failed while applying preview settings: " + (applyError && applyError.message ? applyError.message : applyError));
   } finally {
@@ -3929,7 +4108,7 @@ SORI_TOOLS.applyBoostMode = function (profile, selectedWorkAreaOverride) {
     }
   }
 
-  return SORI_TOOLS.respond(true, captured.preserved ? "Boost refreshed." : "Boost enabled.", { profile: settings.name, comps: compCount, layers: layerCount, heavyEffects: heavyEffects.length, heavyBypassed: heavyBypassed, capturedComps: captured.addedComps, capturedLayers: captured.addedLayers, workAreaSet: workAreaSet, cacheFolder: cacheInfo.folder, cacheBytes: cacheInfo.bytes, cacheRemoved: cacheInfo.removed, cudaApplied: state.cudaApplied === true, memoryTuned: state.memoryTuned === true, memoryPurged: state.memoryPurged === true });
+  return SORI_TOOLS.respond(true, captured.preserved ? "Boost refreshed." : "Boost enabled.", { profile: settings.name, comps: compCount, layers: layerCount, heavyEffects: heavyEffects.length, heavyBypassed: heavyBypassed, capturedComps: captured.addedComps, capturedLayers: captured.addedLayers, workAreaSet: workAreaSet, cacheFolder: cacheInfo.folder, cacheBytes: cacheInfo.bytes, cacheRemoved: cacheInfo.removed, memoryPurged: state.memoryPurged === true });
 };
 
 SORI_TOOLS.countBoostBypassedEffects = function (state) {
@@ -3944,11 +4123,11 @@ SORI_TOOLS.countBoostBypassedEffects = function (state) {
 };
 
 SORI_TOOLS.hasBoostRestoreState = function () {
-  var raw = SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName());
+  var raw = SORI_TOOLS.readBoostRestoreStateText();
   var state = SORI_TOOLS.parse(raw);
   var active = !!(state && state.projectKey === SORI_TOOLS.projectStateKey() && state.comps && state.comps.length);
   if (raw && state && state.projectKey && state.projectKey !== SORI_TOOLS.projectStateKey()) {
-    SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), "");
+    SORI_TOOLS.writeBoostRestoreStateText("");
     return SORI_TOOLS.respond(true, "", { active: false, stale: true, cleared: true });
   }
   return SORI_TOOLS.respond(true, "", { active: active, stale: false, cleared: false });
@@ -3978,7 +4157,7 @@ SORI_TOOLS.boostSignature = function () {
 
 SORI_TOOLS.boostDiagnostics = function () {
   var rootComp = SORI_TOOLS.comp();
-  var raw = SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName());
+  var raw = SORI_TOOLS.readBoostRestoreStateText();
   var state = SORI_TOOLS.parse(raw);
   var active = !!(state && state.projectKey === SORI_TOOLS.projectStateKey() && state.comps && state.comps.length);
   var comps = rootComp ? SORI_TOOLS.collectBoostComps(rootComp) : [];
@@ -4009,7 +4188,7 @@ SORI_TOOLS.boostSelfTest = function () {
     SORI_TOOLS.writeTextFile("boost-self-test.json", SORI_TOOLS.stringify(log));
     return SORI_TOOLS.respond(false, log.error, { file: "tmp/boost-self-test.json" });
   }
-  var existingState = SORI_TOOLS.parse(SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName()));
+  var existingState = SORI_TOOLS.parse(SORI_TOOLS.readBoostRestoreStateText());
   if (existingState && existingState.projectKey === SORI_TOOLS.projectStateKey()) {
     log.error = "Turn Boost off before running self-test.";
     SORI_TOOLS.writeTextFile("boost-self-test.json", SORI_TOOLS.stringify(log));
@@ -4026,15 +4205,15 @@ SORI_TOOLS.boostSelfTest = function () {
 };
 
 SORI_TOOLS.restoreBoostMode = function () {
-  var raw = SORI_TOOLS.readTextFile(SORI_TOOLS.boostRestoreFileName());
+  var raw = SORI_TOOLS.readBoostRestoreStateText();
   if (!raw) return SORI_TOOLS.respond(true, "Boost already off.", { comps: 0, layers: 0, missingComps: 0, missingLayers: 0 });
   var state = SORI_TOOLS.parse(raw);
   if (!state || !state.comps) {
-    SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), "");
+    SORI_TOOLS.writeBoostRestoreStateText("");
     return SORI_TOOLS.respond(false, "Boost restore state was invalid and has been reset.");
   }
   if (state.projectKey !== SORI_TOOLS.projectStateKey()) {
-    SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), "");
+    SORI_TOOLS.writeBoostRestoreStateText("");
     return SORI_TOOLS.respond(true, "Old Boost state cleared for this project.", { comps: 0, layers: 0, stale: true });
   }
 
@@ -4046,7 +4225,10 @@ SORI_TOOLS.restoreBoostMode = function () {
   var heavyRestored = 0;
   var undoOpen = false;
 
-  SORI_TOOLS.updateBoostStateFromCurrent(state);
+  var rootComp = SORI_TOOLS.comp();
+  var settings = SORI_TOOLS.boostProfileSettings(state.profile || "strong");
+  if (rootComp) SORI_TOOLS.syncBoostStateFromComps(state, SORI_TOOLS.collectBoostComps(rootComp), settings);
+  SORI_TOOLS.updateBoostStateFromCurrent(state, settings);
   SORI_TOOLS.restoreBoostSystemSettings(state);
 
   try {
@@ -4096,8 +4278,9 @@ SORI_TOOLS.restoreBoostMode = function () {
     }
   }
 
-  SORI_TOOLS.writeTextFile(SORI_TOOLS.boostRestoreFileName(), "");
-  return SORI_TOOLS.respond(true, "Boost restored.", { comps: compCount, layers: layerCount, missingComps: missingComps, missingLayers: missingLayers, heavyRestored: heavyRestored });
+  SORI_TOOLS.writeDebugFile("boost-restore-diagnostics.json", { restoredAt: String(new Date()), comps: compCount, layers: layerCount, missingComps: missingComps, missingLayers: missingLayers, heavyRestored: heavyRestored, profile: state.profile || "" });
+  SORI_TOOLS.writeBoostRestoreStateText("");
+  return SORI_TOOLS.respond(true, "Boost restored.", { comps: compCount, layers: layerCount, missingComps: missingComps, missingLayers: missingLayers, heavyRestored: heavyRestored, diagnostics: "tmp/boost-restore-diagnostics.json" });
 };
 
 SORI_TOOLS.importPresetFiles = function () {
@@ -4631,6 +4814,23 @@ SORI_TOOLS.exportAepLibraryItem = function (payload) {
   return SORI_TOOLS.respond(true, 'Exported: ' + safeName);
 };
 
+SORI_TOOLS.copyFileRobust = function (sourceFile, destFile) {
+  try {
+    if (!sourceFile || !sourceFile.exists || !destFile) return false;
+    try { if (sourceFile.fsName === destFile.fsName) return true; } catch (esame) {}
+    try { if (sourceFile.copy(destFile)) return true; } catch (ecopy) {}
+    try { if (sourceFile.copy(destFile.fsName)) return true; } catch (ecopy2) {}
+    try {
+      if ($.os && $.os.toLowerCase().indexOf("windows") >= 0 && typeof system !== "undefined" && system.callSystem) {
+        var command = 'cmd.exe /c copy /Y "' + sourceFile.fsName + '" "' + destFile.fsName + '"';
+        system.callSystem(command);
+        if (destFile.exists) return true;
+      }
+    } catch (ecmd) {}
+  } catch (e) {}
+  return false;
+};
+
 SORI_TOOLS.importAepFile = function () {
   var file = File.openDialog('Select AEP file', '*.aep;*.aepx');
   if (!file) return SORI_TOOLS.respond(false, 'Cancelled.');
@@ -4641,16 +4841,17 @@ SORI_TOOLS.importAepFile = function () {
 
   var safeName = decodeURI(file.name).replace(/[\\\/:\*\?\"<>\|]/g, '_');
   var destFolder = new Folder(libDir + '/' + safeName.replace(/\.aepx?$/i, ''));
-  if (!destFolder.exists) destFolder.create();
+  if (!destFolder.exists && !destFolder.create()) return SORI_TOOLS.respond(false, 'Could not create AEP library folder:\n' + destFolder.fsName);
 
   var destFile = new File(destFolder.fsName + '/' + safeName);
-  if (!destFile.exists) {
-    if (!file.copy(destFile)) return SORI_TOOLS.respond(false, 'Could not copy AEP to library.');
+  var alreadyExists = destFile.exists === true;
+  if (!alreadyExists) {
+    if (!SORI_TOOLS.copyFileRobust(file, destFile)) return SORI_TOOLS.respond(false, 'Could not copy AEP to library.\nFrom: ' + file.fsName + '\nTo: ' + destFile.fsName);
   }
 
   var collected = SORI_TOOLS.collectAepFootage(file, destFolder);
 
-  return SORI_TOOLS.respond(true, (destFile.exists ? 'Already in library.' : 'Imported: ') + safeName + (collected > 0 ? ' Footage collected.' : ''), {
+  return SORI_TOOLS.respond(true, (alreadyExists ? 'Already in library: ' : 'Imported: ') + safeName + (collected > 0 ? ' Footage collected.' : ''), {
     type: 'aep',
     name: safeName.replace(/\.aepx?$/i, ''),
     path: destFile.fsName,
@@ -4660,51 +4861,91 @@ SORI_TOOLS.importAepFile = function () {
 
 SORI_TOOLS.collectAepFootage = function (aepFile, destFolder) {
   var collected = 0;
+  var importedFolder = null;
+  var undoOpen = false;
   try {
     var footageFolder = new Folder(destFolder.fsName + '/footage');
-    if (!footageFolder.exists) footageFolder.create();
+    if (!footageFolder.exists && !footageFolder.create()) return 0;
 
-    var sourceFolder = aepFile.parent;
-    if (!sourceFolder || !sourceFolder.exists) return 0;
-
-    function copyEntry(entry, targetFolder) {
+    function clearFolder(folder) {
       try {
-        if (entry instanceof Folder) {
-          var nextFolder = new Folder(targetFolder.fsName + '/' + entry.name);
-          if (!nextFolder.exists) nextFolder.create();
-          var nested = entry.getFiles();
-          for (var n = 0; n < nested.length; n += 1) {
-            copyEntry(nested[n], nextFolder);
+        var items = folder.getFiles();
+        for (var i = 0; i < items.length; i += 1) {
+          if (items[i] instanceof Folder) {
+            clearFolder(items[i]);
+            try { items[i].remove(); } catch (eFolderRemove) {}
+          } else {
+            try { items[i].remove(); } catch (eFileRemove) {}
           }
-          return;
         }
+      } catch (eClear) {}
+    }
 
-        if (!(entry instanceof File)) return;
-        if (entry.fsName === aepFile.fsName) return;
+    clearFolder(footageFolder);
 
-        var destFile = new File(targetFolder.fsName + '/' + entry.name);
+    var io = new ImportOptions(aepFile);
+    if (io.canImportAs(ImportAsType.PROJECT)) io.importAs = ImportAsType.PROJECT;
+    app.beginUndoGroup('SoriTools Collect AEP Footage');
+    undoOpen = true;
+    importedFolder = app.project.importFile(io);
+    if (!importedFolder) return 0;
+
+    var copied = {};
+
+    function folderForPath(parts) {
+      var folder = footageFolder;
+      for (var i = 0; i < parts.length; i += 1) {
+        var name = SORI_TOOLS.cleanName(parts[i]);
+        if (!name) continue;
+        folder = new Folder(folder.fsName + '/' + name);
+        if (!folder.exists) folder.create();
+      }
+      return folder;
+    }
+
+    function copyFootageFile(file, parts) {
+      try {
+        if (!file || !file.exists) return;
+        if (file.fsName === aepFile.fsName) return;
+        var key = String(file.fsName).toLowerCase();
+        if (copied[key]) return;
+        copied[key] = true;
+        var targetFolder = folderForPath(parts);
+        var destFile = new File(targetFolder.fsName + '/' + file.name);
         var counter = 1;
-        while (destFile.exists && destFile.fsName !== entry.fsName) {
-          var base = decodeURI(entry.name).replace(/\.[^\.]+$/, '');
-          var ext = decodeURI(entry.name).match(/\.[^\.]+$/);
+        while (destFile.exists) {
+          var base = decodeURI(file.name).replace(/\.[^\.]+$/, '');
+          var ext = decodeURI(file.name).match(/\.[^\.]+$/);
           ext = ext ? ext[0] : '';
           destFile = new File(targetFolder.fsName + '/' + base + '_' + counter + ext);
           counter += 1;
         }
+        if (SORI_TOOLS.copyFileRobust(file, destFile)) collected += 1;
+      } catch (eCopy) {}
+    }
 
-        if (!destFile.exists) {
-          if (entry.copy(destFile)) collected += 1;
-        } else if (destFile.fsName !== entry.fsName) {
-          collected += 1;
+    function scanProjectItem(item, parts) {
+      try {
+        if (item instanceof FolderItem) {
+          var nextParts = parts.slice(0);
+          if (item !== importedFolder) nextParts.push(item.name);
+          for (var i = 1; i <= item.numItems; i += 1) scanProjectItem(item.item(i), nextParts);
+          return;
         }
-      } catch (eEntry) {}
+        if (item instanceof FootageItem) {
+          try {
+            if (item.mainSource && item.mainSource.file) copyFootageFile(item.mainSource.file, parts);
+          } catch (eSource) {}
+        }
+      } catch (eScan) {}
     }
 
-    var entries = sourceFolder.getFiles();
-    for (var i = 0; i < entries.length; i += 1) {
-      copyEntry(entries[i], footageFolder);
-    }
-  } catch (e) {}
+    scanProjectItem(importedFolder, []);
+  } catch (e) {
+  } finally {
+    try { if (importedFolder) importedFolder.remove(); } catch (eRemove) {}
+    if (undoOpen) { try { app.endUndoGroup(); } catch (eEnd) {} }
+  }
   return collected;
 };
 
@@ -4724,11 +4965,11 @@ SORI_TOOLS.importDroppedAepItems = function (payload) {
 
       var safeName = decodeURI(file.name).replace(/[\\\/:\*\?\"<>\|]/g, '_');
       var destFolder = new Folder(libDir + '/' + safeName.replace(/\.aepx?$/i, ''));
-      if (!destFolder.exists) destFolder.create();
+      if (!destFolder.exists && !destFolder.create()) continue;
 
       var destFile = new File(destFolder.fsName + '/' + safeName);
       if (!destFile.exists) {
-        if (!file.copy(destFile)) continue;
+        if (!SORI_TOOLS.copyFileRobust(file, destFile)) continue;
         SORI_TOOLS.collectAepFootage(file, destFolder);
       }
 
@@ -4753,14 +4994,19 @@ SORI_TOOLS.listAepComps = function (payload) {
   if (!file.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
 
   var comps = [];
+  var compItems = [];
+  var importedFolder = null;
+  var undoOpen = false;
 
   try {
+    app.beginUndoGroup('SoriTools Read AEP Comps');
+    undoOpen = true;
     var io = new ImportOptions(file);
     if (io.canImportAs(ImportAsType.PROJECT)) {
       io.importAs = ImportAsType.PROJECT;
     }
 
-    var importedFolder = app.project.importFile(io);
+    importedFolder = app.project.importFile(io);
 
     function scanImportedItem(item) {
       try {
@@ -4772,8 +5018,10 @@ SORI_TOOLS.listAepComps = function (payload) {
             height: item.height,
             duration: item.duration,
             frameRate: item.frameRate,
-            numLayers: item.numLayers
+            numLayers: item.numLayers,
+            main: true
           });
+          compItems.push({ item: item, name: item.name });
           return;
         }
         if (item && item instanceof FolderItem) {
@@ -4785,12 +5033,52 @@ SORI_TOOLS.listAepComps = function (payload) {
     }
 
     if (importedFolder) scanImportedItem(importedFolder);
+    var referenced = {};
+    for (var r = 0; r < compItems.length; r += 1) {
+      try {
+        var compItem = compItems[r].item;
+        for (var layerIndex = 1; layerIndex <= compItem.numLayers; layerIndex += 1) {
+          var layer = compItem.layer(layerIndex);
+          try {
+            if (layer && layer.source && layer.source instanceof CompItem) referenced[String(layer.source.name)] = true;
+          } catch (eLayerSource) {}
+        }
+      } catch (eRef) {}
+    }
+    for (var m = 0; m < comps.length; m += 1) comps[m].main = referenced[String(comps[m].name)] !== true;
   } catch (e2) {
+    try { if (importedFolder) importedFolder.remove(); } catch (eRemoveFail) {}
+    if (undoOpen) { try { app.endUndoGroup(); } catch (eEndFail) {} }
     return SORI_TOOLS.respond(false, 'Could not read AEP: ' + e2.message);
   }
 
+  try { if (importedFolder) importedFolder.remove(); } catch (eRemove) {}
+  if (undoOpen) { try { app.endUndoGroup(); } catch (eEnd) {} }
+
   if (!comps.length) return SORI_TOOLS.respond(false, 'No compositions found in AEP.');
   return SORI_TOOLS.respond(true, comps.length + ' comp(s) found.', comps);
+};
+
+SORI_TOOLS.importAepProject = function (payload) {
+  var data = SORI_TOOLS.parse(payload);
+  var path = data && data.path ? data.path : String(payload || '');
+  var file = new File(path);
+  if (!file.exists) return SORI_TOOLS.respond(false, 'AEP file not found.');
+  app.beginUndoGroup('SoriTools Import AEP');
+  try {
+    var io = new ImportOptions(file);
+    if (io.canImportAs(ImportAsType.PROJECT)) io.importAs = ImportAsType.PROJECT;
+    var importedFolder = app.project.importFile(io);
+    if (!importedFolder) {
+      app.endUndoGroup();
+      return SORI_TOOLS.respond(false, 'Could not import AEP project.');
+    }
+  } catch (e) {
+    try { app.endUndoGroup(); } catch (eEndFail) {}
+    return SORI_TOOLS.respond(false, 'AEP import failed: ' + e.message);
+  }
+  app.endUndoGroup();
+  return SORI_TOOLS.respond(true, 'AEP imported.');
 };
 
 SORI_TOOLS.importAepComps = function (payload) {
@@ -4806,6 +5094,10 @@ SORI_TOOLS.importAepComps = function (payload) {
 
   var imported = 0;
   var errors = [];
+  var pruned = false;
+  var risky = false;
+  var kept = 0;
+  var removed = 0;
 
   try {
     var io = new ImportOptions(file);
@@ -4817,7 +5109,6 @@ SORI_TOOLS.importAepComps = function (payload) {
     if (!importedFolder) {
       throw new Error('Could not import AEP project.');
     }
-
     var nameSet = {};
     for (var n = 0; n < data.compNames.length; n += 1) {
       nameSet[data.compNames[n]] = true;
@@ -4841,6 +5132,92 @@ SORI_TOOLS.importAepComps = function (payload) {
     var keepItems = [];
     findImportedComps(importedFolder, keepItems);
 
+    function hasItem(list, item) {
+      for (var h = 0; h < list.length; h += 1) {
+        if (list[h] === item) return true;
+      }
+      return false;
+    }
+
+    function addKeep(item) {
+      if (!item) return;
+      if (!hasItem(keepItems, item)) keepItems.push(item);
+      try {
+        var parent = item.parentFolder;
+        while (parent && parent !== importedFolder) {
+          if (!hasItem(keepItems, parent)) keepItems.push(parent);
+          parent = parent.parentFolder;
+        }
+      } catch (eParentKeep) {}
+    }
+
+    function expressionRiskInProp(prop) {
+      try {
+        if (!prop) return false;
+        if (prop.propertyType === PropertyType.PROPERTY) {
+          var expr = "";
+          try { expr = String(prop.expression || ""); } catch (eExpr) {}
+          if (expr && (expr.indexOf("comp(") >= 0 || expr.indexOf("essentialProperty") >= 0 || expr.indexOf("footage(") >= 0)) return true;
+          return false;
+        }
+        if (prop.numProperties) {
+          for (var ep = 1; ep <= prop.numProperties; ep += 1) {
+            if (expressionRiskInProp(prop.property(ep))) return true;
+          }
+        }
+      } catch (ePropRisk) {}
+      return false;
+    }
+
+    var traceVisited = [];
+
+    function traceCompDependencies(comp) {
+      if (hasItem(traceVisited, comp)) return;
+      traceVisited.push(comp);
+      addKeep(comp);
+      try {
+        if (expressionRiskInProp(comp)) risky = true;
+      } catch (eCompRisk) {}
+      try {
+        for (var li = 1; li <= comp.numLayers; li += 1) {
+          var layer = comp.layer(li);
+          try { if (expressionRiskInProp(layer)) risky = true; } catch (eLayerRisk) {}
+          try {
+            if (layer && layer.source) {
+              addKeep(layer.source);
+              if (layer.source instanceof CompItem) traceCompDependencies(layer.source);
+            }
+          } catch (eSource) {}
+        }
+      } catch (eTrace) {}
+    }
+
+    for (var ki = 0; ki < keepItems.length; ki += 1) {
+      if (keepItems[ki] instanceof CompItem) traceCompDependencies(keepItems[ki]);
+    }
+
+    function collectImportedItems(item, out) {
+      try {
+        if (!item) return;
+        out.push(item);
+        if (item instanceof FolderItem) {
+          for (var ii = 1; ii <= item.numItems; ii += 1) collectImportedItems(item.item(ii), out);
+        }
+      } catch (eCollectAll) {}
+    }
+
+    if (!risky && keepItems.length) {
+      var allItems = [];
+      collectImportedItems(importedFolder, allItems);
+      for (var ri = allItems.length - 1; ri >= 0; ri -= 1) {
+        var removeItem = allItems[ri];
+        if (removeItem === importedFolder || hasItem(keepItems, removeItem)) continue;
+        try { removeItem.remove(); removed += 1; } catch (eRemoveItem) {}
+      }
+      kept = keepItems.length;
+      pruned = true;
+    }
+
   } catch (e) {
     errors.push(e.message);
   }
@@ -4850,7 +5227,7 @@ SORI_TOOLS.importAepComps = function (payload) {
   if (imported === 0) {
     return SORI_TOOLS.respond(false, 'No comps imported.' + (errors.length ? '\n' + errors[0] : ''));
   }
-  return SORI_TOOLS.respond(true, 'Imported ' + imported + ' comp(s).', { imported: imported });
+  return SORI_TOOLS.respond(true, 'Imported ' + imported + ' comp(s).' + (pruned ? ' Unused items pruned.' : (risky ? ' Risky expressions found; full import kept.' : '')), { imported: imported, pruned: pruned, risky: risky, kept: kept, removed: removed });
 };
 
 SORI_TOOLS.renameAepLibraryItem = function (payload) {

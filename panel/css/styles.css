@@ -110,7 +110,7 @@ body {
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
-  padding: 8px; gap: 8px;
+  padding: 8px; gap: 6px;
   box-shadow: var(--glass-inner-highlight), var(--glass-shadow-soft);
 }
 
@@ -202,7 +202,7 @@ body {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -1481,10 +1481,37 @@ body.using-keyboard .icon-btn:focus {
 .aep-modal-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 6px;
   min-height: 120px;
   max-height: 50vh;
   position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.aep-modal-body:hover,
+.aep-modal-body:focus-within {
+  scrollbar-color: rgba(155,109,255,0.55) transparent;
+}
+
+.aep-modal-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.aep-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aep-modal-body::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.aep-modal-body:hover::-webkit-scrollbar-thumb,
+.aep-modal-body:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(155,109,255,0.55);
 }
 
 .aep-modal-body.is-drag-active {
@@ -1685,17 +1712,66 @@ body.using-keyboard .icon-btn:focus {
 }
 
 .aep-comp-picker {
+  position: relative;
   text-align: left;
   font-size: 12px;
   line-height: 1.35;
-  max-height: 44vh;
-  overflow-y: auto;
+  max-height: min(44vh, 260px);
+  max-width: 100%;
+  overflow: auto;
+  padding: 0 2px 4px 0;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.aep-comp-picker:hover,
+.aep-comp-picker:focus-within {
+  scrollbar-color: rgba(155,109,255,0.6) transparent;
+}
+
+.aep-comp-picker::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.aep-comp-picker::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aep-comp-picker::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.aep-comp-picker:hover::-webkit-scrollbar-thumb,
+.aep-comp-picker:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(155,109,255,0.6);
+}
+
+.aep-comp-picker::after {
+  content: '';
+  position: sticky;
+  right: 0;
+  bottom: 0;
+  display: block;
+  height: 6px;
+  margin-top: -6px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(155,109,255,0.34), transparent);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.aep-comp-picker:hover::after,
+.aep-comp-picker:focus-within::after {
+  opacity: 1;
 }
 
 .aep-comp-picker label {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: max-content;
   padding: 4px 2px;
   cursor: pointer;
   border-radius: 4px;
