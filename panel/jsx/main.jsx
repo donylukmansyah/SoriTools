@@ -5317,3 +5317,304 @@ SORI_TOOLS.revealAepFolder = function (payload) {
     return SORI_TOOLS.respond(false, 'Could not open folder: ' + e.message);
   }
 };
+
+SORI_TOOLS.topazProjectName = function () {
+  try {
+    if (app.project && app.project.file) return SORI_TOOLS.safeFileStem(app.project.file.displayName || app.project.file.name || 'Untitled_Project');
+  } catch (e) {}
+  return 'Untitled_Project';
+};
+
+SORI_TOOLS.topazRootFolder = function () {
+  var base = null;
+  try {
+    if (app.project && app.project.file && app.project.file.parent) base = app.project.file.parent;
+  } catch (e) {}
+  if (!base) base = SORI_TOOLS.tmpFolder();
+  if (!base) return null;
+  var root = new Folder(base.fsName + '/_SoriTools_Topaz/' + SORI_TOOLS.topazProjectName());
+  if (!root.exists) root.create();
+  return root;
+};
+
+SORI_TOOLS.ensureFolder = function (path) {
+  var folder = new Folder(path);
+  if (!folder.exists) folder.create();
+  return folder;
+};
+
+SORI_TOOLS.topazFolders = function () {
+  var root = SORI_TOOLS.topazRootFolder();
+  if (!root) return null;
+  var inFolder = SORI_TOOLS.ensureFolder(root.fsName + '/IN');
+  var outFolder = SORI_TOOLS.ensureFolder(root.fsName + '/OUT');
+  var metaFolder = SORI_TOOLS.ensureFolder(root.fsName + '/META');
+  return { root: root, input: inFolder, output: outFolder, meta: metaFolder, metaFile: new File(metaFolder.fsName + '/topaz-flow-meta.json') };
+};
+
+SORI_TOOLS.topazLayerKey = function (layer) {
+  try { if (layer.id !== undefined && layer.id !== null) return 'layer-id:' + String(layer.id); } catch (e) {}
+  try { return 'layer-index:' + String(layer.index) + ':' + String(layer.name || ''); } catch (e2) {}
+  return '';
+};
+
+SORI_TOOLS.findLayerByTopazMeta = function (comp, data) {
+  if (!comp || !data) return null;
+  try {
+    for (var i = 1; i <= comp.numLayers; i += 1) {
+      var layer = comp.layer(i);
+      if (data.layerId !== null && data.layerId !== undefined) {
+        try { if (layer.id === data.layerId) return layer; } catch (eId) {}
+      }
+      if (data.layerKey && SORI_TOOLS.topazLayerKey(layer) === data.layerKey) return layer;
+    }
+  } catch (e) {}
+  try {
+    if (data.layerIndex && comp.layer(data.layerIndex)) return comp.layer(data.layerIndex);
+  } catch (e2) {}
+  return null;
+};
+
+SORI_TOOLS.topazRenderTemplate = function (module) {
+  var names = ['Lossless', 'AVI DV NTSC 48kHz', 'High Quality'];
+  for (var i = 0; i < names.length; i += 1) {
+    try { module.applyTemplate(names[i]); return; } catch (e) {}
+  }
+};
+
+SORI_TOOLS.renderTopazSelected = function () {
+  var comp = SORI_TOOLS.comp();
+  if (!comp) return SORI_TOOLS.respond(false, 'Open a comp first.');
+  var layers = SORI_TOOLS.selectedLayers(comp);
+  if (!layers.length) return SORI_TOOLS.respond(false, 'Select trimmed footage layers first.');
+  var folders = SORI_TOOLS.topazFolders();
+  if (!folders) return SORI_TOOLS.respond(false, 'Could not create Topaz folders.');
+
+  var jobs = [];
+  var tempComps = [];
+  var undoOpen = false;
+  app.beginUndoGroup('SoriTools Topaz Flow Export');
+  undoOpen = true;
+  try {
+    for (var i = 0; i < layers.length; i += 1) {
+      var layer = layers[i];
+      var duration = Math.max(1 / comp.frameRate, Number(layer.outPoint) - Number(layer.inPoint));
+      var stem = 'topaz_' + ('000' + (i + 1)).slice(-3) + '_' + SORI_TOOLS.safeFileStem(layer.name || 'clip');
+      var file = SORI_TOOLS.ensureUniqueFile(folders.input, stem, '.avi');
+      var renderComp = comp.duplicate();
+      renderComp.name = SORI_TOOLS.uniqueProjectItemName(stem + '_render');
+      renderComp.workAreaStart = Number(layer.inPoint);
+      renderComp.workAreaDuration = duration;
+      for (var li = 1; li <= renderComp.numLayers; li += 1) {
+        try { renderComp.layer(li).enabled = (li === layer.index); } catch (eLayer) {}
+      }
+      var rq = app.project.renderQueue.items.add(renderComp);
+      rq.timeSpanStart = Number(layer.inPoint);
+      rq.timeSpanDuration = duration;
+      var om = rq.outputModule(1);
+      SORI_TOOLS.topazRenderTemplate(om);
+      om.file = file;
+      jobs.push({
+        stem: stem,
+        inputPath: file.fsName,
+        outputFolder: folders.output.fsName,
+        compName: comp.name,
+        compId: (function () { try { return comp.id; } catch (eId) {} return null; })(),
+        layerId: (function () { try { return layer.id; } catch (eLayerId) {} return null; })(),
+        layerIndex: layer.index,
+        layerKey: SORI_TOOLS.topazLayerKey(layer),
+        layerName: String(layer.name || ''),
+        inPoint: Number(layer.inPoint),
+        outPoint: Number(layer.outPoint),
+        startTime: Number(layer.startTime),
+        stretch: Number(layer.stretch),
+        compWidth: Number(comp.width),
+        compHeight: Number(comp.height),
+        frameRate: Number(comp.frameRate)
+      });
+      tempComps.push(renderComp);
+    }
+    folders.metaFile.encoding = 'UTF-8';
+    folders.metaFile.open('w');
+    folders.metaFile.write(SORI_TOOLS.stringify({ project: SORI_TOOLS.topazProjectName(), root: folders.root.fsName, input: folders.input.fsName, output: folders.output.fsName, jobs: jobs }));
+    folders.metaFile.close();
+    app.endUndoGroup();
+    undoOpen = false;
+    app.project.renderQueue.render();
+    for (var r = 0; r < tempComps.length; r += 1) {
+      try { tempComps[r].remove(); } catch (eRemove) {}
+    }
+  } catch (e) {
+    try { folders.metaFile.close(); } catch (eClose) {}
+    try { if (undoOpen) app.endUndoGroup(); } catch (eUndo) {}
+    return SORI_TOOLS.respond(false, 'Topaz export failed: ' + e.message);
+  }
+  return SORI_TOOLS.respond(true, 'Rendered ' + jobs.length + ' Topaz clip(s).', { root: folders.root.fsName, input: folders.input.fsName, output: folders.output.fsName, jobs: jobs });
+};
+
+SORI_TOOLS.topazOutputNameIsTemporary = function (name) {
+  return /(^|[_\-.])temp\./i.test(name) || /[_\-.]temp\./i.test(name) || /\.tmp$/i.test(name) || /\.part$/i.test(name) || /\.crdownload$/i.test(name);
+};
+
+SORI_TOOLS.findTopazOutput = function (folder, stem, inputPath) {
+  var exts = ['.mov', '.mp4', '.avi', '.mkv'];
+  var files = folder.getFiles();
+  var inputText = String(inputPath || '').replace(/\\/g, '/').toLowerCase();
+  var best = null;
+  var bestTime = -1;
+  for (var e = 0; e < exts.length; e += 1) {
+    for (var i = 0; i < files.length; i += 1) {
+      if (!(files[i] instanceof File)) continue;
+      var name = String(files[i].name || '').toLowerCase();
+      try { name = decodeURI(name); } catch (eName) {}
+      if (SORI_TOOLS.topazOutputNameIsTemporary(name)) continue;
+      var pathText = String(files[i].fsName || '').replace(/\\/g, '/').toLowerCase();
+      if (inputText && pathText === inputText) continue;
+      if (name.indexOf(String(stem).toLowerCase()) !== 0 || name.lastIndexOf(exts[e]) !== name.length - exts[e].length) continue;
+      try {
+        if (!files[i].exists || Number(files[i].length || 0) <= 0) continue;
+        var time = files[i].modified ? files[i].modified.getTime() : 0;
+        if (!best || time > bestTime) {
+          best = files[i];
+          bestTime = time;
+        }
+      } catch (eFile) {}
+    }
+  }
+  return best;
+};
+
+SORI_TOOLS.getTopazFlowMeta = function () {
+  var folders = SORI_TOOLS.topazFolders();
+  if (!folders || !folders.metaFile.exists) return SORI_TOOLS.respond(false, 'Topaz metadata not found.');
+  folders.metaFile.encoding = 'UTF-8';
+  if (!folders.metaFile.open('r')) return SORI_TOOLS.respond(false, 'Could not read Topaz metadata.');
+  var meta = SORI_TOOLS.parse(folders.metaFile.read());
+  folders.metaFile.close();
+  if (!meta || !meta.jobs || !meta.jobs.length) return SORI_TOOLS.respond(false, 'No Topaz jobs found.');
+  return SORI_TOOLS.respond(true, 'Topaz metadata loaded.', meta);
+};
+
+SORI_TOOLS.topazJobKey = function (job) {
+  if (!job) return '';
+  return 'SORI_TOPAZ|' + String(job.compId || '') + '|' + String(job.layerId || '') + '|' + String(job.stem || '') + '|' + String(job.inPoint || '') + '|' + String(job.outPoint || '');
+};
+
+SORI_TOOLS.topazLayerAlreadyImported = function (comp, target, job) {
+  if (!comp || !target || !job) return false;
+  var jobKey = SORI_TOOLS.topazJobKey(job);
+  var expectedName = String(target.name || '') + '_TOPAZ';
+  for (var i = 1; i <= comp.numLayers; i += 1) {
+    try {
+      var layer = comp.layer(i);
+      if (jobKey && String(layer.comment || '') === jobKey) return true;
+      if (String(layer.name || '') !== expectedName) continue;
+      if (Math.abs(Number(layer.inPoint) - Number(job.inPoint)) > 0.001) continue;
+      if (Math.abs(Number(layer.outPoint) - Number(job.outPoint)) > 0.001) continue;
+      return true;
+    } catch (e) {}
+  }
+  return false;
+};
+
+SORI_TOOLS.importTopazOutputSafe = function () {
+  var comp = SORI_TOOLS.comp();
+  if (!comp) return SORI_TOOLS.respond(false, 'Open the target comp first.');
+  var folders = SORI_TOOLS.topazFolders();
+  if (!folders || !folders.metaFile.exists) return SORI_TOOLS.respond(false, 'Topaz metadata not found. Export selected clips first.');
+  folders.metaFile.encoding = 'UTF-8';
+  if (!folders.metaFile.open('r')) return SORI_TOOLS.respond(false, 'Could not read Topaz metadata.');
+  var meta = SORI_TOOLS.parse(folders.metaFile.read());
+  folders.metaFile.close();
+  var jobs = meta && meta.jobs ? meta.jobs : [];
+  if (!jobs.length) return SORI_TOOLS.respond(false, 'No Topaz jobs found.');
+
+  var imported = 0;
+  var completed = 0;
+  var missing = 0;
+  app.beginUndoGroup('SoriTools Topaz Safe Replace');
+  for (var i = 0; i < jobs.length; i += 1) {
+    try {
+      var job = jobs[i];
+      var output = SORI_TOOLS.findTopazOutput(folders.output, job.stem, job.inputPath);
+      if (!output || !output.exists) output = SORI_TOOLS.findTopazOutput(folders.input, job.stem, job.inputPath);
+      if (!output || !output.exists) {
+        missing += 1;
+        continue;
+      }
+      var target = SORI_TOOLS.findLayerByTopazMeta(comp, job);
+      if (!target) {
+        missing += 1;
+        continue;
+      }
+      if (SORI_TOOLS.topazLayerAlreadyImported(comp, target, job)) {
+        completed += 1;
+        continue;
+      }
+      if (!output.exists || Number(output.length || 0) <= 0) {
+        output = SORI_TOOLS.findTopazOutput(folders.output, job.stem, job.inputPath);
+        if (!output || !output.exists) output = SORI_TOOLS.findTopazOutput(folders.input, job.stem, job.inputPath);
+      }
+      if (!output || !output.exists || Number(output.length || 0) <= 0) {
+        missing += 1;
+        continue;
+      }
+      var importOptions = new ImportOptions(output);
+      var footage = app.project.importFile(importOptions);
+      var newLayer = comp.layers.add(footage);
+      newLayer.name = target.name + '_TOPAZ';
+      try { newLayer.comment = SORI_TOOLS.topazJobKey(job); } catch (eComment) {}
+      newLayer.startTime = Number(job.inPoint);
+      newLayer.inPoint = Number(job.inPoint);
+      newLayer.outPoint = Number(job.outPoint);
+      try { newLayer.moveBefore(target); } catch (eMove) {}
+      try {
+        if (footage.width && footage.height && job.compWidth && job.compHeight) {
+          var scale = Math.min((Number(job.compWidth) / Number(footage.width)) * 100, (Number(job.compHeight) / Number(footage.height)) * 100);
+          newLayer.property('ADBE Transform Group').property('ADBE Scale').setValue([scale, scale]);
+        }
+      } catch (eScale) {}
+      try { target.enabled = false; } catch (eDisable) {}
+      imported += 1;
+      completed += 1;
+    } catch (eJob) {
+      missing += 1;
+    }
+  }
+  app.endUndoGroup();
+  if (!completed) return SORI_TOOLS.respond(false, 'No Topaz outputs imported. Check OUT folder names.', { imported: imported, completed: completed, missing: missing, output: folders.output.fsName });
+  return SORI_TOOLS.respond(true, 'Safe replaced ' + imported + ' Topaz clip(s).' + (missing ? ' Missing ' + missing + '.' : ''), { imported: imported, completed: completed, missing: missing, output: folders.output.fsName });
+};
+
+SORI_TOOLS.revealTopazFolder = function () {
+  var folders = SORI_TOOLS.topazFolders();
+  if (!folders) return SORI_TOOLS.respond(false, 'Could not create Topaz folder.');
+  return SORI_TOOLS.respond(true, 'Topaz folder ready.', { root: folders.root.fsName, input: folders.input.fsName, output: folders.output.fsName });
+};
+
+SORI_TOOLS.cleanTopazInput = function () {
+  var folders = SORI_TOOLS.topazFolders();
+  if (!folders) return SORI_TOOLS.respond(false, 'Topaz folder not found.');
+  var jobs = [];
+  if (folders.metaFile.exists) {
+    try {
+      folders.metaFile.encoding = 'UTF-8';
+      if (folders.metaFile.open('r')) {
+        var meta = SORI_TOOLS.parse(folders.metaFile.read());
+        folders.metaFile.close();
+        jobs = meta && meta.jobs ? meta.jobs : [];
+      }
+    } catch (eMeta) {
+      try { folders.metaFile.close(); } catch (eClose) {}
+    }
+  }
+  var removed = 0;
+  for (var i = 0; i < jobs.length; i += 1) {
+    try {
+      if (!jobs[i] || !jobs[i].inputPath) continue;
+      var file = new File(jobs[i].inputPath);
+      if (file.exists && String(file.fsName || '').replace(/\\/g, '/').toLowerCase() === String(jobs[i].inputPath || '').replace(/\\/g, '/').toLowerCase() && file.remove()) removed += 1;
+    } catch (e) {}
+  }
+  return SORI_TOOLS.respond(true, 'Cleaned ' + removed + ' Topaz input render(s).');
+};

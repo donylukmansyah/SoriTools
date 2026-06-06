@@ -43,6 +43,7 @@
     progressDismissed: false
   };
   var boostRun = { active: false, loading: false, profile: "strong" };
+  var topazRun = { watchTimer: 0, resumeTimer: 0, startedAt: 0, data: null, notified: false, outputStats: {}, importing: false, importedReady: 0, busy: false };
 
   var runtime = { hostVersion: 0, legacyCep: false, jsxPath: "", jsxLoaded: false };
 
@@ -193,6 +194,7 @@
     els.presetDropZone = document.getElementById("presetDropZone");
     els.presetEmpty = document.getElementById("presetEmpty");
     els.aepLibraryBtn = document.getElementById("aepLibraryBtn");
+    els.topazFlowBtn = document.getElementById("topazFlowBtn");
     els.aepLibraryModal = document.getElementById("aepLibraryModal");
     els.aepModalCloseBtn = document.getElementById("aepModalCloseBtn");
     els.aepSearchWrap = document.getElementById("aepSearchWrap");
@@ -369,6 +371,19 @@
     if (els.boostBtn) {
       els.boostBtn.addEventListener("click", toggleBoostButtonState);
       els.boostBtn.addEventListener("contextmenu", openBoostOptions);
+    }
+    if (els.topazFlowBtn) {
+      els.topazFlowBtn.addEventListener("click", function (e) {
+        if (e.shiftKey || shiftHeld) {
+          topazFlowImport();
+          return;
+        }
+        topazFlowExport();
+      });
+      els.topazFlowBtn.addEventListener("contextmenu", function (e) {
+        e.preventDefault();
+        openTopazFlowOptions();
+      });
     }
 
     var alignButtons = document.querySelectorAll("[data-align]");
@@ -2336,6 +2351,260 @@
     });
   }
 
+  function runTopazFlowBusy(work) {
+    if (topazRun.busy) return false;
+    topazRun.busy = true;
+    try {
+      work(function () {
+        topazRun.busy = false;
+      });
+    } catch (error) {
+      topazRun.busy = false;
+      throw error;
+    }
+    return true;
+  }
+
+  function topazFlowExport() {
+    runTopazFlowBusy(function (done) {
+      stopTopazOutputWatcher();
+      callAe("SORI_TOOLS.renderTopazSelected()", function (response) {
+        done();
+        if (response && response.ok && response.data) {
+          clearTopazFlowImported(response.data);
+          openTopazFlowFolders(response.data);
+          startTopazOutputWatcher(response.data);
+        }
+      }, els.topazFlowBtn);
+    });
+  }
+
+  function topazFlowImport() {
+    runTopazFlowBusy(function (done) {
+      stopTopazOutputWatcher();
+      callAe("SORI_TOOLS.importTopazOutputSafe()", function () {
+        done();
+      }, els.topazFlowBtn);
+    });
+  }
+
+  function openTopazFlowOptions() {
+    popup({
+      title: "Topaz Flow",
+      html: '<div class="boost-options"><button data-topaz-action="import">Import OUT<br><span>Safe replace finished Topaz outputs</span></button><button data-topaz-action="reveal">Reveal Folder<br><span>Open IN / OUT working folder</span></button><button data-topaz-action="clean">Clean IN<br><span>Remove temporary AE renders only</span></button></div>',
+      showConfirmButton: false,
+      showDenyButton: false,
+      showCancelButton: true,
+      cancelButtonText: "Close",
+      customClass: { popup: "soritools-boost-options-popup soritools-topaz-options-popup" },
+      didOpen: function (popupEl) {
+        var buttons = popupEl.querySelectorAll("[data-topaz-action]");
+        for (var i = 0; i < buttons.length; i += 1) {
+          buttons[i].onclick = function () {
+            var action = this.getAttribute("data-topaz-action") || "";
+            if (typeof Swal !== "undefined" && Swal.close) Swal.close();
+            if (action === "import") {
+              topazFlowImport();
+            } else if (action === "reveal") {
+              callAe("SORI_TOOLS.revealTopazFolder()", function (response) {
+                if (response && response.ok && response.data) openTopazFolderPath(response.data.root || response.data.input);
+              }, els.topazFlowBtn);
+            } else if (action === "clean") {
+              callAe("SORI_TOOLS.cleanTopazInput()", null, els.topazFlowBtn);
+            }
+          };
+        }
+      }
+    });
+  }
+
+  function openTopazFlowMoreOptions() {
+    popup({
+      title: "Topaz Flow More",
+      text: "Clean temporary AE renders in IN folder? OUT files stay safe.",
+      showCancelButton: true,
+      confirmButtonText: "Clean IN",
+      cancelButtonText: "Cancel"
+    }).then(function (result) {
+      if (result && result.isConfirmed) callAe("SORI_TOOLS.cleanTopazInput()", null, els.topazFlowBtn);
+    });
+  }
+
+  function openTopazFolderPath(path) {
+    var nodeRequire = getNodeRequire();
+    if (!nodeRequire || !path) return;
+    try {
+      var childProcess = nodeRequire("child_process");
+      childProcess.spawn("explorer.exe", [path], { detached: true, stdio: "ignore" }).unref();
+    } catch (error) {}
+  }
+
+  function openTopazFlowFolders(data) {
+    var nodeRequire = getNodeRequire();
+    if (!nodeRequire) return;
+    try {
+      var childProcess = nodeRequire("child_process");
+      var topazPath = "C:\\Program Files\\Topaz Labs LLC\\Topaz Video AI\\Topaz Video AI.exe";
+      var args = [];
+      if (data && data.jobs) {
+        for (var i = 0; i < data.jobs.length; i += 1) {
+          if (data.jobs[i] && data.jobs[i].inputPath) args.push(data.jobs[i].inputPath);
+        }
+      }
+      childProcess.spawn(topazPath, args, { detached: true, stdio: "ignore" }).unref();
+    } catch (error) {}
+  }
+
+  function showTopazExportGuide(data) {
+    if (!data || !data.output) return;
+    popup({
+      title: "Topaz Flow Watching OUT",
+      html: '<div style="text-align:left;font-size:12px;line-height:1.6">Topaz files imported. Best: set Topaz export folder to:<br><br><code style="word-break:break-all">' + esc(data.output) + '</code><br><br>SoriTools watches OUT and IN, then auto-imports when exported files appear.</div>',
+      showCancelButton: true,
+      confirmButtonText: "OK",
+      cancelButtonText: "Stop Watch"
+    }).then(function (result) {
+      if (result && result.dismiss === "cancel") stopTopazOutputWatcher();
+    });
+  }
+
+  function startTopazResumeLoop() {
+    if (topazRun.resumeTimer) return;
+    topazRun.resumeTimer = window.setInterval(function () {
+      if (!topazRun.watchTimer) resumeTopazOutputWatcher();
+    }, 4000);
+  }
+
+  function resumeTopazOutputWatcher() {
+    callAeQuiet("SORI_TOOLS.getTopazFlowMeta()", function (response) {
+      if (response && response.ok && response.data && response.data.jobs && response.data.jobs.length && !isTopazFlowImported(response.data)) startTopazOutputWatcher(response.data, true);
+    });
+  }
+
+  function startTopazOutputWatcher(data, silent) {
+    var nodeRequire = getNodeRequire();
+    if (!nodeRequire || !data || !data.output || !data.jobs || !data.jobs.length) return;
+    if (topazRun.watchTimer) window.clearInterval(topazRun.watchTimer);
+    topazRun.data = data;
+    topazRun.startedAt = Date.now();
+    topazRun.notified = silent === true;
+    topazRun.outputStats = {};
+    topazRun.importing = false;
+    topazRun.importedReady = 0;
+    checkTopazOutputReady();
+    topazRun.watchTimer = window.setInterval(checkTopazOutputReady, 3000);
+  }
+
+  function stopTopazOutputWatcher() {
+    if (topazRun.watchTimer) window.clearInterval(topazRun.watchTimer);
+    topazRun.watchTimer = 0;
+    topazRun.data = null;
+    topazRun.startedAt = 0;
+    topazRun.notified = false;
+    topazRun.outputStats = {};
+    topazRun.importing = false;
+    topazRun.importedReady = 0;
+  }
+
+  function checkTopazOutputReady() {
+    var nodeRequire = getNodeRequire();
+    var data = topazRun.data;
+    if (!nodeRequire || !data || !data.output || !data.jobs) {
+      stopTopazOutputWatcher();
+      return;
+    }
+    if (Date.now() - topazRun.startedAt > 6 * 60 * 60 * 1000) {
+      stopTopazOutputWatcher();
+      toast("error", "Topaz Flow watcher timed out.");
+      return;
+    }
+    try {
+      var fs = nodeRequire("fs");
+      var outputFiles = fs.existsSync(data.output) ? fs.readdirSync(data.output) : [];
+      var inputFiles = fs.existsSync(data.input) ? fs.readdirSync(data.input) : [];
+      var ready = 0;
+      for (var i = 0; i < data.jobs.length; i += 1) {
+        if (topazOutputFileExists(fs, data.output, outputFiles, data.jobs[i], false) || topazOutputFileExists(fs, data.input, inputFiles, data.jobs[i], true)) ready += 1;
+      }
+      if (ready > topazRun.importedReady && !topazRun.importing) {
+        topazRun.importing = true;
+        callAeQuiet("SORI_TOOLS.importTopazOutputSafe()", function (response) {
+          topazRun.importing = false;
+          if (response && response.ok) topazRun.importedReady = ready;
+          if (response && response.ok && response.data && Number(response.data.missing || 0) <= 0) {
+            markTopazFlowImported(data);
+            stopTopazOutputWatcher();
+            toast("success", response.message || "Topaz clips imported.");
+          } else if (response && response.ok && !topazRun.notified) {
+            topazRun.notified = true;
+          }
+        });
+      }
+    } catch (error) {}
+  }
+
+  function topazFlowImportKey(data) {
+    var parts = [data && data.root ? data.root : ""];
+    if (data && data.jobs) {
+      for (var i = 0; i < data.jobs.length; i += 1) parts.push(data.jobs[i] && data.jobs[i].stem ? data.jobs[i].stem : "");
+    }
+    return "sori.tools.topaz.imported." + parts.join("|");
+  }
+
+  function isTopazFlowImported(data) {
+    try { return localStorage.getItem(topazFlowImportKey(data)) === "1"; } catch (error) {}
+    return false;
+  }
+
+  function markTopazFlowImported(data) {
+    try { localStorage.setItem(topazFlowImportKey(data), "1"); } catch (error) {}
+  }
+
+  function clearTopazFlowImported(data) {
+    try { localStorage.removeItem(topazFlowImportKey(data)); } catch (error) {}
+  }
+
+  function topazOutputFileExists(fs, folderPath, files, job, allowInputFolder) {
+    var lowerStem = String(job && job.stem || "").toLowerCase();
+    var exts = [".mov", ".mp4", ".avi", ".mkv"];
+    for (var i = 0; i < files.length; i += 1) {
+      var rawName = String(files[i] || "");
+      var name = rawName.toLowerCase();
+      if (topazOutputNameIsTemporary(name)) continue;
+      for (var e = 0; e < exts.length; e += 1) {
+        if (name.indexOf(lowerStem) !== 0 || name.lastIndexOf(exts[e]) !== name.length - exts[e].length) continue;
+        try {
+          var filePath = folderPath + "\\" + rawName;
+          var fileStat = fs.statSync(filePath);
+          if (allowInputFolder && job && job.inputPath && normalizePath(filePath) === normalizePath(job.inputPath)) {
+            var inputStat = fs.statSync(job.inputPath);
+            if (fileStat.mtime.getTime() <= inputStat.mtime.getTime()) continue;
+          }
+          if (topazOutputFileStable(filePath, fileStat)) return true;
+        } catch (error) {}
+      }
+    }
+    return false;
+  }
+
+  function topazOutputNameIsTemporary(name) {
+    return /(^|[_\-.])temp\./i.test(name) || /[_\-.]temp\./i.test(name) || /\.tmp$/i.test(name) || /\.part$/i.test(name) || /\.crdownload$/i.test(name);
+  }
+
+  function topazOutputFileStable(filePath, stat) {
+    var key = normalizePath(filePath);
+    var prev = topazRun.outputStats[key];
+    var now = Date.now();
+    var size = Number(stat && stat.size || 0);
+    var mtime = stat && stat.mtime ? stat.mtime.getTime() : 0;
+    topazRun.outputStats[key] = { size: size, mtime: mtime, checkedAt: now };
+    return !!(size > 0 && prev && prev.size === size && prev.mtime === mtime && now - mtime > 2000);
+  }
+
+  function normalizePath(path) {
+    return String(path || "").replace(/\\/g, "/").toLowerCase();
+  }
+
   // ── Helpers for DOM traversal ──
 
   function closestNode(el) {
@@ -2411,7 +2680,11 @@
       if (!runtime.jsxLoaded && !silent) {
         toast("error", "Could not load SoriTools logic from manifest ScriptPath: " + String(response || "unknown error"));
       }
-      if (runtime.jsxLoaded) syncBoostRestoreState();
+      if (runtime.jsxLoaded) {
+        syncBoostRestoreState();
+        resumeTopazOutputWatcher();
+        startTopazResumeLoop();
+      }
     });
   }
 
@@ -2733,12 +3006,6 @@
         showConfirmButton: false,
         timer: 1800,
         timerProgressBar: true,
-        showClass: {
-          popup: "sori-toast-show"
-        },
-        hideClass: {
-          popup: "sori-toast-hide"
-        },
         customClass: {
           popup: "soritools-toast"
         },

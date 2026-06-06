@@ -218,6 +218,11 @@ body {
   height: 14px;
 }
 
+.topaz-flow-btn {
+  grid-column: 1 / -1;
+  height: 30px;
+}
+
 /* Row 3: Timeline Nav & Settings */
 .row-timeline {
   display: flex;
@@ -1070,6 +1075,26 @@ body.using-keyboard .icon-btn:focus {
   -webkit-backdrop-filter: blur(8px) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.10) !important;
   transition: background var(--transition), transform 100ms ease !important;
+}
+.swal2-popup.soritools-topaz-options-popup .swal2-actions .soritools-confirm,
+.swal2-popup.soritools-topaz-options-popup .swal2-actions .soritools-deny {
+  display: none !important;
+}
+.swal2-popup.soritools-topaz-options-popup .swal2-actions .soritools-cancel {
+  margin-left: 0 !important;
+}
+.swal2-popup.soritools-topaz-options-popup {
+  overflow: visible !important;
+}
+.swal2-popup.soritools-topaz-options-popup .swal2-html-container {
+  overflow: visible !important;
+}
+.swal2-popup.soritools-topaz-options-popup .boost-options button {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.swal2-popup.soritools-topaz-options-popup .boost-options button + button {
+  margin-top: 7px;
 }
 .boost-options {
   display: flex;

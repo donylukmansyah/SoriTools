@@ -52,6 +52,16 @@ SoriTools is an open-source Adobe After Effects CEP extension for fast daily mot
 - Right-click: profiles and refresh
 - Shift + Click / Shift + Right-click: boost or refresh and set work area to selected layers
 
+### Topaz Flow
+
+- Render selected timeline footage to a project-local Topaz `IN` folder and open Topaz Video AI
+- Watch Topaz `IN` / `OUT` folders and auto-import finished outputs back above the original layers
+- Supports batch outputs that finish at different times
+- Ignores temporary or zero-byte Topaz files while exports are still writing
+- Prevents duplicate imports and double-click export/import races
+- Shift + Click: manual `Import OUT` fallback
+- Right-click: Import OUT, Reveal Folder, Clean IN
+
 ### Timeline Navigation
 
 - Jump to layer in/out/center
