@@ -8,7 +8,7 @@
   var cs = new CSInterface();
   var els = {};
   var state = { presetTree: [], selectedId: "", bulkDeleteMode: false, checkedIds: {}, searchQuery: "", searchBusy: false };
-  var aepState = { items: [], selectedId: "", selectionMode: false, checkedIds: {} };
+  var aepState = { items: [], tree: [], selectedId: "", selectionMode: false, checkedIds: {} };
   var aepDrag = { srcId: null, mode: null };
   var treeDrag = { srcId: null, mode: null };
   var fullMakerClickAt = 0;
@@ -22,6 +22,11 @@
   var shiftHeld = false;
   var presetSearchTimer = 0;
   var presetSearchInputValue = "";
+  var presetSearchVersion = 0;
+  var aepSearchTimer = 0;
+  var aepSearchInputValue = "";
+  var aepSearchVersion = 0;
+  var fuseSearchCache = {};
   var tooltipTimer = 0;
   var tooltipTarget = null;
   var proxyRun = {
@@ -202,6 +207,7 @@
     els.aepSearchClearBtn = document.getElementById("aepSearchClearBtn");
     els.aepSearchSpinner = document.getElementById("aepSearchSpinner");
     els.aepImportBtn = document.getElementById("aepImportBtn");
+    els.aepNewFolderBtn = document.getElementById("aepNewFolderBtn");
     els.aepSelectionModeBtn = document.getElementById("aepSelectionModeBtn");
     els.aepDropZone = document.getElementById("aepDropZone");
     els.aepList = document.getElementById("aepList");
@@ -292,7 +298,7 @@
       if (e.shiftKey) runPrecompWithRiskCheck(true);
     });
     els.unprecompBtn.addEventListener("click", function () {
-      callAe("SORI_TOOLS.unprecompSelected()", null, els.unprecompBtn);
+      runWithLayerRiskCheck("Unprecomp", "SORI_TOOLS.unprecompSelected()", els.unprecompBtn);
     });
     if (els.effectsToggleBtn) {
       els.effectsToggleBtn.addEventListener("click", function (e) {
@@ -328,10 +334,10 @@
           return;
         }
         if (e.shiftKey || shiftHeld) {
-          toggleProxies();
+          runWithLayerRiskCheck("Toggle Proxies", "SORI_TOOLS.toggleSelectedProxies()", els.proxyBtn);
           return;
         }
-        createAutoProxies();
+        runWithLayerRiskCheck("Auto Proxy", null, els.proxyBtn, createAutoProxies);
       });
       els.proxyBtn.addEventListener("mousedown", function (e) {
         if (e.button !== 2 || !(e.shiftKey || shiftHeld)) return;
@@ -341,7 +347,7 @@
           showProxyProgress(proxyRun.current, proxyRun.total, proxyRun.name, true);
           return;
         }
-        toggleProxies();
+        runWithLayerRiskCheck("Toggle Proxies", "SORI_TOOLS.toggleSelectedProxies()", els.proxyBtn);
       });
       els.proxyBtn.addEventListener("contextmenu", function (e) {
         e.preventDefault();
@@ -352,7 +358,7 @@
         if (e.shiftKey || shiftHeld) {
           if (Date.now() - proxyContextClickAt > 300) {
             proxyContextClickAt = Date.now();
-            toggleProxies();
+            runWithLayerRiskCheck("Toggle Proxies", "SORI_TOOLS.toggleSelectedProxies()", els.proxyBtn);
           }
           return;
         }
@@ -361,11 +367,12 @@
     }
     if (els.savePresetBtn) {
       els.savePresetBtn.addEventListener("click", function (e) {
-        saveSelectedAnimationPreset(e.shiftKey || e.ctrlKey || e.metaKey);
+        var autoSelect = e.shiftKey || e.ctrlKey || e.metaKey;
+        runWithLayerRiskCheck("Save Preset", null, els.savePresetBtn, function () { saveSelectedAnimationPreset(autoSelect); });
       });
       els.savePresetBtn.addEventListener("contextmenu", function (e) {
         e.preventDefault();
-        saveSelectedAnimationPreset(true);
+        runWithLayerRiskCheck("Save Preset", null, els.savePresetBtn, function () { saveSelectedAnimationPreset(true); });
       });
     }
     if (els.boostBtn) {
@@ -378,7 +385,7 @@
           topazFlowImport();
           return;
         }
-        topazFlowExport();
+        runWithLayerRiskCheck("Topaz Flow", null, els.topazFlowBtn, topazFlowExport);
       });
       els.topazFlowBtn.addEventListener("contextmenu", function (e) {
         e.preventDefault();
@@ -448,6 +455,7 @@
     if (els.aepLibraryBtn) els.aepLibraryBtn.addEventListener("click", openAepLibraryModal);
     if (els.aepModalCloseBtn) els.aepModalCloseBtn.addEventListener("click", function () { closeAepLibraryModal(); });
     if (els.aepImportBtn) els.aepImportBtn.addEventListener("click", importAepFile);
+    if (els.aepNewFolderBtn) els.aepNewFolderBtn.addEventListener("click", createNewAepFolder);
     if (els.aepSelectionModeBtn) els.aepSelectionModeBtn.addEventListener("click", toggleAepSelectionMode);
     if (els.aepSearch) els.aepSearch.addEventListener("input", handleAepSearchInput);
     if (els.aepSearchClearBtn) els.aepSearchClearBtn.addEventListener("click", clearAepSearch);
@@ -529,20 +537,42 @@
         callAe("SORI_TOOLS.precompSelected(" + (single ? "true" : "false") + ")", null, els.precompBtn);
         return;
       }
-      var lines = [];
-      for (var i = 0; i < risky.length && i < 6; i += 1) {
-        lines.push(esc(risky[i].name) + ": " + esc((risky[i].reasons || []).join(", ")));
-      }
-      popup({
-        title: "Risky Precomp Detected",
-        html: '<div style="text-align:left;font-size:12px;line-height:1.5"><p>These layers may change after precomp/unprecomp:</p><p>' + lines.join("<br>") + '</p><p>A debug snapshot will be written if you continue.</p></div>',
-        icon: "warning",
-        showCancelButton: true,
-        confirmButtonText: "Continue",
-        cancelButtonText: "Cancel"
-      }).then(function (result) {
-        if (result && result.isConfirmed) callAe("SORI_TOOLS.precompSelected(" + (single ? "true" : "false") + ")", null, els.precompBtn);
+      showLayerRiskConfirm("Risky Precomp Detected", "These layers may change after precomp/unprecomp:", risky, "A debug snapshot will be written if you continue.", function () {
+        callAe("SORI_TOOLS.precompSelected(" + (single ? "true" : "false") + ")", null, els.precompBtn);
       });
+    });
+  }
+
+  function runWithLayerRiskCheck(title, script, triggerBtn, fallback) {
+    callAeQuiet("SORI_TOOLS.selectedLayerRiskSummary()", function (response) {
+      var risky = response && response.ok && response.data && response.data.risky ? response.data.risky : [];
+      var run = function () {
+        if (script) callAe(script, null, triggerBtn);
+        else if (fallback) fallback();
+      };
+      if (!response || response.ok === false || !risky.length) {
+        run();
+        return;
+      }
+      showLayerRiskConfirm("Risky " + title + " Target", "Selected layers have edge-case settings:", risky, "Continue if this is intended.", run);
+    });
+  }
+
+  function showLayerRiskConfirm(title, intro, risky, outro, onConfirm) {
+    var lines = [];
+    for (var i = 0; i < risky.length && i < 8; i += 1) {
+      lines.push(esc(risky[i].name) + ": " + esc((risky[i].reasons || []).join(", ")));
+    }
+    if (risky.length > lines.length) lines.push("+" + (risky.length - lines.length) + " more layer(s)");
+    popup({
+      title: title,
+      html: '<div style="text-align:left;font-size:12px;line-height:1.5"><p>' + esc(intro) + '</p><p>' + lines.join("<br>") + '</p><p>' + esc(outro) + '</p></div>',
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Continue",
+      cancelButtonText: "Cancel"
+    }).then(function (result) {
+      if (result && result.isConfirmed && onConfirm) onConfirm();
     });
   }
 
@@ -909,7 +939,7 @@
       return;
     }
 
-    var nodes = state.searchQuery ? filterPresetTree(state.presetTree, state.searchQuery) : state.presetTree;
+    var nodes = state.searchQuery ? filterPresetTree(state.presetTree, state.searchQuery, createFuseMatchMap("preset", flattenSearchNodes(state.presetTree), state.searchQuery, ["name", "path", "type"], presetSearchVersion)) : state.presetTree;
     if (!nodes.length) {
       setPresetEmpty("No presets found", true);
       return;
@@ -1007,6 +1037,63 @@
     return queryTokens.length > 0;
   }
 
+  function flattenSearchNodes(nodes) {
+    var result = [];
+    for (var i = 0; i < nodes.length; i += 1) {
+      result.push(nodes[i]);
+      if (nodes[i].children) {
+        var sub = flattenSearchNodes(nodes[i].children);
+        for (var j = 0; j < sub.length; j += 1) result.push(sub[j]);
+      }
+    }
+    return result;
+  }
+
+  function clearFuseCacheScope(scope) {
+    for (var key in fuseSearchCache) {
+      if (key.indexOf(scope + ":") === 0) delete fuseSearchCache[key];
+    }
+  }
+
+  function bumpPresetSearchVersion() {
+    presetSearchVersion += 1;
+    clearFuseCacheScope("preset");
+  }
+
+  function bumpAepSearchVersion() {
+    aepSearchVersion += 1;
+    clearFuseCacheScope("aep");
+  }
+
+  function createFuseMatchMap(scope, items, query, keys, version) {
+    if (!query || typeof Fuse === "undefined" || !items || !items.length) return null;
+    try {
+      var cacheKey = scope + ":" + String(version);
+      var cached = fuseSearchCache[cacheKey];
+      if (!cached) {
+        cached = {
+          items: items,
+          fuse: new Fuse(items, {
+            keys: keys,
+            threshold: 0.35,
+            ignoreLocation: true,
+            shouldSort: true,
+            minMatchCharLength: 1
+          })
+        };
+        fuseSearchCache[cacheKey] = cached;
+      }
+      var matches = cached.fuse.search(query);
+      var map = {};
+      for (var i = 0; i < matches.length; i += 1) {
+        var item = matches[i].item || matches[i];
+        if (item && item.id) map[item.id] = true;
+      }
+      return map;
+    } catch (error) {}
+    return null;
+  }
+
   function clonePresetNodeForSearch(node, children) {
     var copy = {
       id: node.id,
@@ -1029,12 +1116,12 @@
     return result;
   }
 
-  function filterPresetTree(nodes, query) {
+  function filterPresetTree(nodes, query, matchMap) {
     var result = [];
     for (var i = 0; i < nodes.length; i += 1) {
       var node = nodes[i];
-      var selfMatch = matchesSearchQuery(nodeSearchText(node), query);
-      var childMatches = node.children ? filterPresetTree(node.children, query) : [];
+      var selfMatch = matchMap ? !!matchMap[node.id] : matchesSearchQuery(nodeSearchText(node), query);
+      var childMatches = node.children ? filterPresetTree(node.children, query, matchMap) : [];
 
       if (selfMatch || childMatches.length) {
         var children = null;
@@ -1216,7 +1303,7 @@
   }
 
   function applyPresetNormal(path) {
-    callAe("SORI_TOOLS.applyPreset(" + q(path) + ")");
+    runWithLayerRiskCheck("Preset Apply", "SORI_TOOLS.applyPreset(" + q(path) + ")");
   }
 
   function applyPresetSmart(path, mode) {
@@ -1674,7 +1761,7 @@
     e.stopPropagation();
 
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
-      saveSelectedAnimationPreset();
+      runWithLayerRiskCheck("Save Preset", null, els.addPresetBtn, function () { saveSelectedAnimationPreset(); });
       return;
     }
 
@@ -1696,7 +1783,7 @@
       closeContextMenu();
 
       if (action === "save-selected") {
-        saveSelectedAnimationPreset();
+        runWithLayerRiskCheck("Save Preset", null, els.addPresetBtn, function () { saveSelectedAnimationPreset(); });
       } else if (action === "import-files") {
         choosePresetFiles();
       } else if (action === "import-folder") {
@@ -3191,9 +3278,14 @@
   function openAepSelectionMenu(e) {
     closeAepContextMenu(true);
 
-    var checkedCount = 0;
+    ensureAepTree();
+    var checkedIds = [];
     for (var k in aepState.checkedIds) {
-      if (aepState.checkedIds[k]) checkedCount += 1;
+      if (aepState.checkedIds[k]) checkedIds.push(k);
+    }
+    var checkedCount = 0;
+    for (var i = 0; i < checkedIds.length; i += 1) {
+      if (!hasCheckedAepAncestor(checkedIds[i], checkedIds)) checkedCount += 1;
     }
 
     var menu = document.createElement("div");
@@ -3232,16 +3324,33 @@
     if (!els.aepSearchWrap) return;
     var hasQuery = !!getAepSearchQuery();
     els.aepSearchWrap.classList.toggle("has-query", hasQuery);
-    els.aepSearchWrap.classList.toggle("is-searching", false);
+    els.aepSearchWrap.classList.toggle("is-searching", !!aepSearchTimer);
   }
 
   function handleAepSearchInput() {
+    var value = els.aepSearch ? els.aepSearch.value : "";
+    if (value === aepSearchInputValue) return;
+    aepSearchInputValue = value;
+    if (aepSearchTimer) window.clearTimeout(aepSearchTimer);
+    if (!normalizeSearch(value)) {
+      aepSearchTimer = 0;
+      syncAepSearchUi();
+      renderAepList();
+      return;
+    }
+    aepSearchTimer = window.setTimeout(function () {
+      aepSearchTimer = 0;
+      syncAepSearchUi();
+      renderAepList();
+    }, 120);
     syncAepSearchUi();
-    renderAepList();
   }
 
   function clearAepSearch() {
     if (!els.aepSearch) return;
+    if (aepSearchTimer) window.clearTimeout(aepSearchTimer);
+    aepSearchTimer = 0;
+    aepSearchInputValue = "";
     els.aepSearch.value = "";
     syncAepSearchUi();
     renderAepList();
@@ -3273,16 +3382,147 @@
 
   function toggleAepItemCheck(id, checked) {
     aepState.checkedIds[id] = checked;
+    var node = findAepNode(id);
+    if (node && node.children) checkAllAepChildren(node.children, checked);
+    syncAepFolderCheckState(aepState.tree);
     saveAepState();
     renderAepList();
   }
 
+  function checkAllAepChildren(children, checked) {
+    for (var i = 0; i < children.length; i += 1) {
+      aepState.checkedIds[children[i].id] = checked;
+      if (children[i].children) checkAllAepChildren(children[i].children, checked);
+    }
+  }
+
+  function syncAepFolderCheckState(nodes) {
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node.children || !node.children.length) continue;
+      syncAepFolderCheckState(node.children);
+      var allChecked = true;
+      for (var j = 0; j < node.children.length; j += 1) {
+        if (!aepState.checkedIds[node.children[j].id]) {
+          allChecked = false;
+          break;
+        }
+      }
+      aepState.checkedIds[node.id] = allChecked;
+    }
+  }
+
+  function findAepNodeResult(tree, id) {
+    for (var i = 0; i < tree.length; i += 1) {
+      if (tree[i].id === id) return { node: tree[i], parent: tree, index: i };
+      if (tree[i].children) {
+        var sub = findAepNodeResult(tree[i].children, id);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  }
+
+  function findAepNode(id) {
+    var r = findAepNodeResult(aepState.tree, id);
+    return r ? r.node : null;
+  }
+
+  function removeAepNode(tree, id) {
+    for (var i = 0; i < tree.length; i += 1) {
+      if (tree[i].id === id) return tree.splice(i, 1)[0];
+      if (tree[i].children) {
+        var removed = removeAepNode(tree[i].children, id);
+        if (removed) return removed;
+      }
+    }
+    return null;
+  }
+
+  function flattenAepItems(nodes) {
+    var result = [];
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (nodes[i].type === "aep") result.push(nodes[i]);
+      if (nodes[i].children) {
+        var sub = flattenAepItems(nodes[i].children);
+        for (var j = 0; j < sub.length; j += 1) result.push(sub[j]);
+      }
+    }
+    return result;
+  }
+
+  function syncAepItemsFromTree() {
+    aepState.items = flattenAepItems(aepState.tree);
+  }
+
+  function ensureAepTree() {
+    if (!aepState.tree || !aepState.tree.length) {
+      aepState.tree = [];
+      for (var i = 0; i < aepState.items.length; i += 1) {
+        var item = aepState.items[i];
+        item.type = "aep";
+        if (!item.id) item.id = uid();
+        aepState.tree.push(item);
+      }
+    }
+    assignAepNodeIds(aepState.tree);
+    syncAepItemsFromTree();
+  }
+
+  function assignAepNodeIds(nodes) {
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (!nodes[i].id) nodes[i].id = uid();
+      if (!nodes[i].type) nodes[i].type = nodes[i].children ? "folder" : "aep";
+      if (nodes[i].type === "folder" && !nodes[i].children) nodes[i].children = [];
+      if (nodes[i].children) assignAepNodeIds(nodes[i].children);
+    }
+  }
+
+  function createNewAepFolder() {
+    ensureAepTree();
+    var folder = { id: uid(), type: "folder", name: "New Folder", expanded: true, children: [] };
+    var selected = findAepNode(aepState.selectedId);
+    if (selected && selected.type === "folder") {
+      if (!selected.children) selected.children = [];
+      selected.children.push(folder);
+      selected.expanded = true;
+    } else {
+      aepState.tree.push(folder);
+    }
+    aepState.selectedId = folder.id;
+    saveAepState();
+    renderAepList();
+    renameAepNodeStart(folder.id);
+  }
+
+  function aepNodeContainsId(node, id) {
+    if (!node || !node.children) return false;
+    for (var i = 0; i < node.children.length; i += 1) {
+      if (node.children[i].id === id || aepNodeContainsId(node.children[i], id)) return true;
+    }
+    return false;
+  }
+
+  function hasCheckedAepAncestor(id, checkedIds) {
+    for (var i = 0; i < checkedIds.length; i += 1) {
+      if (checkedIds[i] === id) continue;
+      var node = findAepNode(checkedIds[i]);
+      if (aepNodeContainsId(node, id)) return true;
+    }
+    return false;
+  }
+
   function deleteCheckedAepItems() {
+    ensureAepTree();
     var checkedIds = [];
     for (var k in aepState.checkedIds) {
       if (aepState.checkedIds[k]) checkedIds.push(k);
     }
-    if (!checkedIds.length) {
+    var rootCheckedIds = [];
+    for (var c = 0; c < checkedIds.length; c += 1) {
+      if (!hasCheckedAepAncestor(checkedIds[c], checkedIds)) rootCheckedIds.push(checkedIds[c]);
+    }
+    if (!rootCheckedIds.length) {
       aepState.selectionMode = false;
       saveAepState();
       renderAepList();
@@ -3292,7 +3532,7 @@
     closeAepLibraryModal(function () {
       popup({
           title: "Delete AEP?",
-          text: "This will delete " + checkedIds.length + " item(s) permanently.",
+          text: "This will delete " + rootCheckedIds.length + " selected item(s) permanently.",
         icon: "warning",
         showCancelButton: true,
         confirmButtonText: "Delete",
@@ -3302,22 +3542,25 @@
           openAepLibraryModal();
           return;
         }
-        for (var i = 0; i < checkedIds.length; i += 1) {
-          var id = checkedIds[i];
-          for (var j = 0; j < aepState.items.length; j += 1) {
-            if (aepState.items[j].id === id) {
-              callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: aepState.items[j].folder })) + ")");
-              aepState.items.splice(j, 1);
-              break;
-            }
+        var deletedFolders = {};
+        for (var i = 0; i < rootCheckedIds.length; i += 1) {
+          var node = findAepNode(rootCheckedIds[i]);
+          var items = node && node.type === "folder" ? flattenAepItems(node.children || []) : (node && node.type === "aep" ? [node] : []);
+          for (var j = 0; j < items.length; j += 1) {
+            var folderKey = String(items[j].folder || items[j].path || "");
+            if (folderKey && deletedFolders[folderKey]) continue;
+            if (folderKey) deletedFolders[folderKey] = true;
+            callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: items[j].folder })) + ")");
           }
+          removeAepNode(aepState.tree, rootCheckedIds[i]);
         }
+        syncAepItemsFromTree();
         aepState.checkedIds = {};
         aepState.selectionMode = false;
         saveAepState();
         renderAepList();
         openAepLibraryModal();
-        toast("success", "Deleted " + checkedIds.length + " item(s).");
+        toast("success", "Deleted " + rootCheckedIds.length + " selected item(s).");
       });
     });
   }
@@ -3327,12 +3570,18 @@
 
     var menu = document.createElement("div");
     menu.className = "preset-menu aep-context-menu";
-    menu.innerHTML = '<button type="button" data-aep-menu="import"><span>Import comps</span></button>' +
-      '<button type="button" data-aep-menu="export"><span>Export AEP</span></button>' +
-      '<button type="button" data-aep-menu="recollect"><span>Re-collect footage</span></button>' +
-      '<button type="button" data-aep-menu="rename"><span>Rename</span></button>' +
-      '<button type="button" data-aep-menu="reveal"><span>Reveal folder</span></button>' +
-      '<button type="button" class="danger" data-aep-menu="delete"><span>Delete</span></button>';
+    if (item.type === "folder") {
+      menu.innerHTML = '<button type="button" data-aep-menu="new-folder"><span>New Folder</span></button>' +
+        '<button type="button" data-aep-menu="rename"><span>Rename</span></button>' +
+        '<button type="button" class="danger" data-aep-menu="delete"><span>Delete Folder</span></button>';
+    } else {
+      menu.innerHTML = '<button type="button" data-aep-menu="import"><span>Import comps</span></button>' +
+        '<button type="button" data-aep-menu="export"><span>Export AEP</span></button>' +
+        '<button type="button" data-aep-menu="recollect"><span>Re-collect footage</span></button>' +
+        '<button type="button" data-aep-menu="rename"><span>Rename</span></button>' +
+        '<button type="button" data-aep-menu="reveal"><span>Reveal folder</span></button>' +
+        '<button type="button" class="danger" data-aep-menu="delete"><span>Delete</span></button>';
+    }
 
     menu.addEventListener("click", function (menuEvent) {
       var actionBtn = closestAepMenuButton(menuEvent.target);
@@ -3341,11 +3590,12 @@
       menuEvent.preventDefault();
       menuEvent.stopPropagation();
       closeAepContextMenu();
-      if (action === "import") importAllAepComps(item);
-      else if (action === "export") exportAepItem(item);
-      else if (action === "recollect") recollectAepFootage(item);
-      else if (action === "rename") renameAepItem(item);
-      else if (action === "reveal") revealAepFolder(item);
+      if (action === "new-folder") createNewAepFolder();
+      else if (action === "import" && item.type === "aep") importAllAepComps(item);
+      else if (action === "export" && item.type === "aep") exportAepItem(item);
+      else if (action === "recollect" && item.type === "aep") recollectAepFootage(item);
+      else if (action === "rename") renameAepNodeStart(item.id);
+      else if (action === "reveal" && item.type === "aep") revealAepFolder(item);
       else if (action === "delete") window.setTimeout(function () { deleteAepItem(item); }, 0);
     });
 
@@ -3418,27 +3668,30 @@
 
   function addAepItem(item) {
     if (!item || !item.path) return;
+    ensureAepTree();
     for (var i = 0; i < aepState.items.length; i += 1) {
       if (normalizedPath(aepState.items[i].path) === normalizedPath(item.path)) return;
     }
     item.id = uid();
-    aepState.items.push(item);
+    item.type = "aep";
+    var selected = findAepNode(aepState.selectedId);
+    if (selected && selected.type === "folder") {
+      if (!selected.children) selected.children = [];
+      selected.children.push(item);
+      selected.expanded = true;
+    } else {
+      aepState.tree.push(item);
+    }
+    syncAepItemsFromTree();
     saveAepState();
     renderAepList();
   }
 
-  function findAepItemIndex(id) {
-    for (var i = 0; i < aepState.items.length; i += 1) {
-      if (aepState.items[i].id === id) return i;
-    }
-    return -1;
-  }
-
   function clearAepDropIndicators() {
     if (!els.aepList) return;
-    var all = els.aepList.querySelectorAll(".drop-above, .drop-below");
+    var all = els.aepList.querySelectorAll(".drop-above, .drop-below, .drop-inside");
     for (var i = 0; i < all.length; i += 1) {
-      all[i].classList.remove("drop-above", "drop-below");
+      all[i].classList.remove("drop-above", "drop-below", "drop-inside");
     }
   }
 
@@ -3464,15 +3717,17 @@
     var targetId = row.getAttribute("data-id");
     if (targetId === aepDrag.srcId) return;
 
+    var targetNode = findAepNode(targetId);
     var rect = row.getBoundingClientRect();
     var y = e.clientY - rect.top;
-    if (y < rect.height / 2) row.classList.add("drop-above");
+    if (targetNode && targetNode.type === "folder" && y > rect.height * 0.25 && y < rect.height * 0.75) row.classList.add("drop-inside");
+    else if (y < rect.height / 2) row.classList.add("drop-above");
     else row.classList.add("drop-below");
   }
 
   function aepItemDragLeave(e) {
     var row = closestAepItem(e.target);
-    if (row) row.classList.remove("drop-above", "drop-below");
+    if (row) row.classList.remove("drop-above", "drop-below", "drop-inside");
   }
 
   function aepItemDropReorder(e) {
@@ -3487,20 +3742,29 @@
     var targetId = row.getAttribute("data-id");
     if (targetId === aepDrag.srcId) return true;
 
-    var srcIndex = findAepItemIndex(aepDrag.srcId);
-    var targetIndex = findAepItemIndex(targetId);
-    if (srcIndex < 0 || targetIndex < 0) return true;
+    ensureAepTree();
+    var targetNode = findAepNode(targetId);
+    var targetResult = findAepNodeResult(aepState.tree, targetId);
+    if (!targetResult) return true;
 
-    var srcItem = aepState.items.splice(srcIndex, 1)[0];
+    var srcItem = removeAepNode(aepState.tree, aepDrag.srcId);
     if (!srcItem) return true;
 
-    if (srcIndex < targetIndex) targetIndex -= 1;
     var rect = row.getBoundingClientRect();
     var y = e.clientY - rect.top;
-    if (y < rect.height / 2) aepState.items.splice(targetIndex, 0, srcItem);
-    else aepState.items.splice(targetIndex + 1, 0, srcItem);
+    if (targetNode && targetNode.type === "folder" && y > rect.height * 0.25 && y < rect.height * 0.75) {
+      if (!targetNode.children) targetNode.children = [];
+      targetNode.children.push(srcItem);
+      targetNode.expanded = true;
+    } else {
+      var newTargetResult = findAepNodeResult(aepState.tree, targetId);
+      if (!newTargetResult) aepState.tree.push(srcItem);
+      else if (y < rect.height / 2) newTargetResult.parent.splice(newTargetResult.index, 0, srcItem);
+      else newTargetResult.parent.splice(newTargetResult.index + 1, 0, srcItem);
+    }
 
     aepState.selectedId = srcItem.id;
+    syncAepItemsFromTree();
     saveAepState();
     renderAepList();
     return true;
@@ -3527,79 +3791,162 @@
 
   function renderAepList() {
     if (!els.aepList || !els.aepEmpty) return;
+    ensureAepTree();
     els.aepList.innerHTML = "";
     if (els.aepSelectionModeBtn) els.aepSelectionModeBtn.classList.toggle("active", !!aepState.selectionMode);
 
     var query = getAepSearchQuery();
-    var visibleCount = 0;
+    var nodes = query ? filterAepTree(aepState.tree, query, createFuseMatchMap("aep", flattenSearchNodes(aepState.tree), query, ["name", "path", "folder", "type"], aepSearchVersion)) : aepState.tree;
     syncAepSearchUi();
     clearAepDropIndicators();
+    renderAepNodes(els.aepList, nodes, 0);
 
-    for (var i = 0; i < aepState.items.length; i += 1) {
-      var item = aepState.items[i];
-      if (query && normalizeSearch(item.name).indexOf(query) === -1) continue;
-      visibleCount += 1;
-      var row = document.createElement("div");
-      row.className = "aep-item" + (item.id === aepState.selectedId ? " is-selected" : "") + (aepState.selectionMode ? " is-selection-mode" : "") + (aepState.checkedIds[item.id] ? " is-checked" : "");
-      row.setAttribute("title", aepState.selectionMode ? "Click: Check item · Right-click: Options" : "Click: Select · Double-click: Import all comps · Shift+Click: Pick comps");
-      row.setAttribute("draggable", "true");
-      row.setAttribute("data-id", item.id);
-
-      row.innerHTML = (aepState.selectionMode ? '<input class="aep-check" type="checkbox" ' + (aepState.checkedIds[item.id] ? 'checked' : '') + '>' : '') +
-        '<span class="aep-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></span>' +
-        '<span class="aep-item-name-wrap"><span class="aep-item-name">' + esc(item.name) + '</span></span>' +
-        '<button class="aep-item-action-btn aep-export-btn" data-aep-action="export" title="Export AEP" aria-label="Export AEP"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></button>';
-
-      (function (aepItem, rowEl) {
-        rowEl.addEventListener("click", function (e) {
-          var actionBtn = closestAepActionBtn(e.target);
-          if (actionBtn) {
-            e.stopPropagation();
-            if (actionBtn.getAttribute("data-aep-action") === "export") exportAepItem(aepItem);
-            return;
-          }
-          if (aepState.selectionMode) {
-            toggleAepItemCheck(aepItem.id, !aepState.checkedIds[aepItem.id]);
-            return;
-          }
-          aepState.selectedId = aepItem.id;
-          saveAepState();
-          renderAepList();
-          if (e.shiftKey) openAepCompPicker(aepItem);
-        });
-
-        rowEl.addEventListener("dblclick", function (e) {
-          if (aepState.selectionMode) return;
-          e.preventDefault();
-          e.stopPropagation();
-          aepState.selectedId = aepItem.id;
-          saveAepState();
-          renderAepList();
-          importAllAepComps(aepItem);
-        });
-
-        rowEl.addEventListener("contextmenu", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          aepState.selectedId = aepItem.id;
-          saveAepState();
-          renderAepList();
-          if (aepState.selectionMode) openAepSelectionMenu(e);
-          else showAepItemMenu(e, aepItem);
-        });
-
-        rowEl.addEventListener("dragstart", aepItemDragStart);
-        rowEl.addEventListener("dragover", aepItemDragOver);
-        rowEl.addEventListener("dragleave", aepItemDragLeave);
-        rowEl.addEventListener("drop", aepItemDropReorder);
-        rowEl.addEventListener("dragend", aepItemDragEnd);
-      })(item, row);
-
-      els.aepList.appendChild(row);
-    }
-
-    els.aepEmpty.style.display = visibleCount ? "none" : "";
+    els.aepEmpty.style.display = nodes.length ? "none" : "";
     els.aepEmpty.textContent = aepState.items.length ? "No AEP found." : "Drop .aep files here or click Import AEP";
+  }
+
+  function renderAepNodes(container, nodes, depth) {
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      var row = createAepNodeRow(node, depth);
+      container.appendChild(row);
+      if (node.type === "folder" && node.children && node.expanded) {
+        var childContainer = document.createElement("div");
+        childContainer.className = "tree-children";
+        renderAepNodes(childContainer, node.children, depth + 1);
+        container.appendChild(childContainer);
+      }
+    }
+  }
+
+  function createAepNodeRow(item, depth) {
+    var row = document.createElement("div");
+    row.className = "aep-item tree-node" + (item.type === "folder" ? " tree-folder" : "") + (item.id === aepState.selectedId ? " is-selected" : "") + (aepState.selectionMode ? " is-selection-mode" : "") + (aepState.checkedIds[item.id] ? " is-checked" : "");
+    row.setAttribute("title", item.type === "folder" ? "Click: Select · Double-click: Open/Close · Right-click: Options" : (aepState.selectionMode ? "Click: Check item · Right-click: Options" : "Click: Select · Double-click: Import all comps · Shift+Click: Pick comps"));
+    row.setAttribute("draggable", "true");
+    row.setAttribute("data-id", item.id);
+    row.setAttribute("data-type", item.type);
+
+    var html = "";
+    if (depth > 0) html += '<span class="tree-node-indent" style="width:' + (depth * 14) + 'px"></span>';
+    if (aepState.selectionMode) html += '<input class="aep-check tree-node-checkbox" type="checkbox" ' + (aepState.checkedIds[item.id] ? 'checked' : '') + '>';
+    html += '<span class="tree-node-chevron' + (item.type === "folder" && item.expanded ? ' is-expanded' : '') + '">' + (item.type === "folder" ? '&#9654;' : '') + '</span>';
+    html += '<span class="aep-item-icon tree-node-icon">' + (item.type === "folder" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>') + '</span>';
+    html += '<span class="aep-item-name-wrap"><span class="aep-item-name tree-node-name">' + esc(item.name) + '</span></span>';
+    if (item.type === "aep") html += '<button class="aep-item-action-btn aep-export-btn" data-aep-action="export" title="Export AEP" aria-label="Export AEP"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></button>';
+    row.innerHTML = html;
+
+    (function (aepItem, rowEl) {
+      var chev = rowEl.querySelector(".tree-node-chevron");
+      if (chev) chev.addEventListener("click", function (e) { e.stopPropagation(); toggleAepFolder(aepItem.id); });
+      rowEl.addEventListener("click", function (e) { handleAepNodeClick(e, aepItem); });
+      rowEl.addEventListener("dblclick", function (e) { handleAepNodeDblClick(e, aepItem); });
+      rowEl.addEventListener("contextmenu", function (e) { handleAepNodeContextMenu(e, aepItem); });
+      rowEl.addEventListener("dragstart", aepItemDragStart);
+      rowEl.addEventListener("dragover", aepItemDragOver);
+      rowEl.addEventListener("dragleave", aepItemDragLeave);
+      rowEl.addEventListener("drop", aepItemDropReorder);
+      rowEl.addEventListener("dragend", aepItemDragEnd);
+    })(item, row);
+    return row;
+  }
+
+  function cloneAepNodeForSearch(node, children) {
+    var copy = {};
+    for (var k in node) {
+      if (k !== "children") copy[k] = node[k];
+    }
+    if (node.type === "folder") copy.expanded = true;
+    if (children) copy.children = children;
+    return copy;
+  }
+
+  function filterAepTree(nodes, query, matchMap) {
+    var result = [];
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      var selfMatch = matchMap ? !!matchMap[node.id] : matchesSearchQuery(String(node.name || "") + " " + String(node.path || ""), query);
+      var childMatches = node.children ? filterAepTree(node.children, query, matchMap) : [];
+      if (selfMatch || childMatches.length) result.push(cloneAepNodeForSearch(node, childMatches));
+    }
+    return result;
+  }
+
+  function toggleAepFolder(id) {
+    var node = findAepNode(id);
+    if (!node || node.type !== "folder") return;
+    node.expanded = !node.expanded;
+    saveAepState();
+    renderAepList();
+  }
+
+  function handleAepNodeClick(e, item) {
+    var actionBtn = closestAepActionBtn(e.target);
+    if (actionBtn) {
+      e.stopPropagation();
+      if (actionBtn.getAttribute("data-aep-action") === "export") exportAepItem(item);
+      return;
+    }
+    if (aepState.selectionMode) {
+      toggleAepItemCheck(item.id, !aepState.checkedIds[item.id]);
+      return;
+    }
+    aepState.selectedId = item.id;
+    saveAepState();
+    renderAepList();
+    if (item.type === "aep" && e.shiftKey) openAepCompPicker(item);
+  }
+
+  function handleAepNodeDblClick(e, item) {
+    if (aepState.selectionMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    aepState.selectedId = item.id;
+    saveAepState();
+    renderAepList();
+    if (item.type === "folder") toggleAepFolder(item.id);
+    else importAllAepComps(item);
+  }
+
+  function handleAepNodeContextMenu(e, item) {
+    e.preventDefault();
+    e.stopPropagation();
+    aepState.selectedId = item.id;
+    saveAepState();
+    renderAepList();
+    if (aepState.selectionMode) openAepSelectionMenu(e);
+    else showAepItemMenu(e, item);
+  }
+
+  function renameAepNodeStart(id) {
+    var node = findAepNode(id);
+    if (!node) return;
+    if (node.type === "aep") {
+      renameAepItem(node);
+      return;
+    }
+    var row = els.aepList.querySelector("[data-id=\"" + id + "\"]");
+    if (!row) return;
+    var nameSpan = row.querySelector(".aep-item-name");
+    if (!nameSpan) return;
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "tree-node-name-input";
+    input.value = node.name;
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+    function commit() {
+      var next = input.value.trim();
+      if (next) node.name = next;
+      saveAepState();
+      renderAepList();
+    }
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Escape") { input.value = node.name; input.blur(); }
+    });
   }
 
   function closestAepActionBtn(el) {
@@ -3694,9 +4041,10 @@
   function deleteAepItem(item) {
     closeAepContextMenu();
     closeAepLibraryModal(function () {
+      var items = item.type === "folder" ? flattenAepItems(item.children || []) : [item];
       popup({
-          title: "Delete AEP?",
-          text: item.name + " and all collected footage will be permanently deleted.",
+          title: item.type === "folder" ? "Delete AEP Folder?" : "Delete AEP?",
+          text: item.type === "folder" ? "This will delete folder and " + items.length + " AEP item(s) permanently." : item.name + " and all collected footage will be permanently deleted.",
         icon: "warning",
         showCancelButton: true,
         confirmButtonText: "Delete",
@@ -3707,19 +4055,17 @@
           return;
         }
 
-        callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: item.folder })) + ")", function () {
-          for (var i = 0; i < aepState.items.length; i += 1) {
-            if (aepState.items[i].id === item.id) {
-              aepState.items.splice(i, 1);
-              break;
-            }
-          }
-          if (aepState.selectedId === item.id) aepState.selectedId = "";
-          saveAepState();
-          renderAepList();
-          openAepLibraryModal();
-          toast("success", "Deleted " + item.name + ".");
-        });
+        for (var i = 0; i < items.length; i += 1) {
+          callAeQuiet("SORI_TOOLS.deleteAepLibraryItem(" + q(JSON.stringify({ folder: items[i].folder })) + ")");
+        }
+        ensureAepTree();
+        removeAepNode(aepState.tree, item.id);
+        syncAepItemsFromTree();
+        if (aepState.selectedId === item.id) aepState.selectedId = "";
+        saveAepState();
+        renderAepList();
+        openAepLibraryModal();
+        toast("success", "Deleted " + item.name + ".");
       });
     });
   }
@@ -3768,25 +4114,36 @@
 
   function loadAepState() {
     try {
-      var raw = localStorage.getItem(AEP_STORAGE_KEY);
-      if (!raw) return;
-      var saved = JSON.parse(raw);
-      aepState.items = saved.items || [];
-      aepState.selectedId = saved.selectedId || "";
-      aepState.selectionMode = saved.selectionMode === true;
-      aepState.checkedIds = saved.checkedIds || {};
-      for (var i = 0; i < aepState.items.length; i += 1) {
-        if (!aepState.items[i].id) aepState.items[i].id = uid();
-      }
-    } catch (error) {}
+      loadAepStateFromRaw(localStorage.getItem(AEP_STORAGE_KEY));
+    } catch (error) {
+      try {
+        loadAepStateFromRaw(localStorage.getItem(AEP_STORAGE_BACKUP_KEY));
+        toast("warning", "AEP library restored from backup.");
+      } catch (backupError) {}
+    }
+  }
+
+  function loadAepStateFromRaw(raw) {
+    if (!raw) return;
+    var saved = JSON.parse(raw);
+    aepState.items = saved.items || [];
+    aepState.tree = saved.tree || [];
+    aepState.selectedId = saved.selectedId || "";
+    aepState.selectionMode = saved.selectionMode === true;
+    aepState.checkedIds = saved.checkedIds || {};
+    ensureAepTree();
+    if (aepState.selectedId && !findAepNode(aepState.selectedId)) aepState.selectedId = "";
   }
 
   function saveAepState() {
     try {
+      bumpAepSearchVersion();
       var existing = localStorage.getItem(AEP_STORAGE_KEY);
       if (existing) localStorage.setItem(AEP_STORAGE_BACKUP_KEY, existing);
+      syncAepItemsFromTree();
       localStorage.setItem(AEP_STORAGE_KEY, JSON.stringify({
         items: aepState.items,
+        tree: aepState.tree,
         selectedId: aepState.selectedId,
         selectionMode: aepState.selectionMode === true,
         checkedIds: aepState.checkedIds,
@@ -3797,37 +4154,45 @@
 
   function loadState() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      var saved = JSON.parse(raw);
+      loadStateFromRaw(localStorage.getItem(STORAGE_KEY));
+    } catch (error) {
+      try {
+        loadStateFromRaw(localStorage.getItem(STORAGE_BACKUP_KEY));
+        toast("warning", "Preset library restored from backup.");
+      } catch (backupError) {}
+    }
+  }
 
-      // Migrate from old flat format
-      if (saved.presets && !saved.presetTree) {
-        state.presetTree = [];
-        for (var i = 0; i < saved.presets.length; i += 1) {
-          var p = saved.presets[i];
-          state.presetTree.push({
-            id: p.id || uid(),
-            type: "preset",
-            name: p.name,
-            path: p.path
-          });
-        }
-        state.selectedId = saved.selectedId || "";
-        saveState();
-        return;
+  function loadStateFromRaw(raw) {
+    if (!raw) return;
+    var saved = JSON.parse(raw);
+
+    if (saved.presets && !saved.presetTree) {
+      state.presetTree = [];
+      for (var i = 0; i < saved.presets.length; i += 1) {
+        var p = saved.presets[i];
+        state.presetTree.push({
+          id: p.id || uid(),
+          type: "preset",
+          name: p.name,
+          path: p.path
+        });
       }
-
-      state.presetTree = saved.presetTree || [];
       state.selectedId = saved.selectedId || "";
-      if (saved.boostProfile) boostRun.profile = saved.boostProfile;
-      assignIds(state.presetTree);
-      if (state.selectedId && !findNode(state.selectedId)) state.selectedId = "";
-    } catch (error) {}
+      saveState();
+      return;
+    }
+
+    state.presetTree = saved.presetTree || [];
+    state.selectedId = saved.selectedId || "";
+    if (saved.boostProfile) boostRun.profile = saved.boostProfile;
+    assignIds(state.presetTree);
+    if (state.selectedId && !findNode(state.selectedId)) state.selectedId = "";
   }
 
   function saveState() {
     try {
+      bumpPresetSearchVersion();
       var existing = localStorage.getItem(STORAGE_KEY);
       if (existing) localStorage.setItem(STORAGE_BACKUP_KEY, existing);
       localStorage.setItem(STORAGE_KEY, JSON.stringify({

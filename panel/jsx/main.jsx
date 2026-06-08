@@ -1165,16 +1165,42 @@ SORI_TOOLS.precompRiskSummary = function () {
   for (var i = 0; i < layers.length; i += 1) {
     try {
       var layer = layers[i];
-      var reasons = [];
-      if (SORI_TOOLS.scanRiskyExpressions(layer).length) reasons.push("expression refs time/layer/comp");
-      if (layer.parent) reasons.push("parented");
-      if (SORI_TOOLS.hasTimeRemap(layer)) reasons.push("time remap");
-      if (SORI_TOOLS.hasReverseStretch(layer)) reasons.push("reverse stretch");
+      var reasons = SORI_TOOLS.layerRiskReasons(layer);
       if (SORI_TOOLS.layerHasRiskyKeyedEffects(layer)) reasons.push("third-party keyed/effect expression");
       if (reasons.length) risky.push({ name: String(layer.name || ("Layer " + layer.index)), reasons: reasons });
     } catch (e) {}
   }
   return SORI_TOOLS.respond(true, "", { risky: risky, count: risky.length });
+};
+
+SORI_TOOLS.layerRiskReasons = function (layer) {
+  var reasons = [];
+  try { if (SORI_TOOLS.isLocked(layer)) reasons.push("locked"); } catch (e0) {}
+  try { if (SORI_TOOLS.scanRiskyExpressions(layer).length) reasons.push("expression refs time/layer/comp"); } catch (e1) {}
+  try { if (layer.parent) reasons.push("parented"); } catch (e2) {}
+  try { if (SORI_TOOLS.hasTimeRemap(layer)) reasons.push("time remap"); } catch (e3) {}
+  try { if (SORI_TOOLS.hasReverseStretch(layer)) reasons.push("reverse stretch"); } catch (e4) {}
+  try { if (SORI_TOOLS.hasSeparatedPosition(layer)) reasons.push("separated position"); } catch (e5) {}
+  try { if (SORI_TOOLS.is3DLayer(layer)) reasons.push("3D layer"); } catch (e6) {}
+  try { if (SORI_TOOLS.isCameraLayer(layer) || SORI_TOOLS.isLightLayer(layer)) reasons.push("camera/light"); } catch (e7) {}
+  try { if (layer.source && layer.source.file && !layer.source.file.exists) reasons.push("missing source"); } catch (e8) {}
+  return reasons;
+};
+
+SORI_TOOLS.selectedLayerRiskSummary = function () {
+  var comp = SORI_TOOLS.comp();
+  if (!comp) return SORI_TOOLS.respond(false, "No active composition.");
+  var layers = SORI_TOOLS.selectedLayers(comp);
+  if (!layers.length) return SORI_TOOLS.respond(false, "Select at least one layer.");
+  var risky = [];
+  for (var i = 0; i < layers.length; i += 1) {
+    try {
+      var layer = layers[i];
+      var reasons = SORI_TOOLS.layerRiskReasons(layer);
+      if (reasons.length) risky.push({ name: String(layer.name || ("Layer " + layer.index)), reasons: reasons });
+    } catch (e) {}
+  }
+  return SORI_TOOLS.respond(true, "", { risky: risky, count: risky.length, selected: layers.length });
 };
 
 SORI_TOOLS.addMakerLayer = function (comp, type, duration) {

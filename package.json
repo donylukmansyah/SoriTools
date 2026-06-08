@@ -4,6 +4,7 @@
   "private": true,
   "description": "SoriTools CEP panel for Adobe After Effects.",
   "dependencies": {
+    "fuse.js": "^6.6.2",
     "sweetalert2": "^11.4.8"
   }
 }
